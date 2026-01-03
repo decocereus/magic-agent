@@ -1,0 +1,28 @@
+# Build artifacts
+/target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config with secrets
+config.toml
+
+# Logs
+*.log
+
+# Test artifacts
+*.plan.json

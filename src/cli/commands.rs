@@ -1,10 +1,46 @@
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::io::{self, Write};
 use std::path::Path;
 
 use crate::config::Config;
 use crate::interpreter::{LlmClient, Plan};
 use crate::resolve::ResolveBridge;
+
+/// Provider info for the selection menu
+struct ProviderInfo {
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+}
+
+const PROVIDERS: &[ProviderInfo] = &[
+    ProviderInfo {
+        id: "openai",
+        label: "OpenAI",
+        description: "GPT-4, GPT-4o",
+    },
+    ProviderInfo {
+        id: "anthropic",
+        label: "Anthropic",
+        description: "Claude",
+    },
+    ProviderInfo {
+        id: "openrouter",
+        label: "OpenRouter",
+        description: "Multiple models",
+    },
+    ProviderInfo {
+        id: "lmstudio",
+        label: "LM Studio",
+        description: "Local models",
+    },
+    ProviderInfo {
+        id: "custom",
+        label: "Custom",
+        description: "OpenAI-compatible API",
+    },
+];
 
 /// Doctor command - check system status
 pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
@@ -367,4 +403,171 @@ pub async fn apply(
     }
     
     Ok(())
+}
+
+/// Interactive provider selection
+pub fn select_provider(config: &mut Config) -> Result<()> {
+    println!("\n\u{1F527} Select AI Provider:\n");
+
+    for (i, p) in PROVIDERS.iter().enumerate() {
+        let current = if p.id == config.llm.provider {
+            " (current)"
+        } else {
+            ""
+        };
+        println!("  {}. {:12} - {}{}", i + 1, p.id, p.description, current);
+    }
+
+    print!("\nEnter number (1-5) or 'q' to cancel: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input == "q" || input.is_empty() {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let choice: usize = input
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid selection: {}", input))?;
+
+    if choice < 1 || choice > PROVIDERS.len() {
+        return Err(anyhow::anyhow!(
+            "Invalid selection: {}. Please enter 1-{}",
+            choice,
+            PROVIDERS.len()
+        ));
+    }
+
+    let selected = &PROVIDERS[choice - 1];
+    config.set_provider(selected.id);
+
+    // Save config
+    config.write()?;
+
+    println!("\n\u{2714} Provider set to: {}", selected.label);
+    println!("\n\u{1F4DD} Configuration saved to:");
+    println!("   {}", Config::default_path().display());
+
+    // Check API key requirement
+    if !config.llm.requires_api_key() {
+        println!(
+            "\n\u{2714} {} doesn't require an API key.",
+            selected.label
+        );
+    } else if config.llm.api_key.is_none() {
+        let env_var = match selected.id {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "openrouter" => "OPENROUTER_API_KEY",
+            _ => "API_KEY",
+        };
+
+        println!(
+            "\n\u{26A0}\u{FE0F}  API key not configured for {}.",
+            selected.label
+        );
+        println!("\n\u{1F4DD} Add your API key to:");
+        println!("   {}", Config::default_path().display());
+        println!("\n   [llm]");
+        println!("   provider = \"{}\"", selected.id);
+        println!("   api_key = \"your-key-here\"");
+        println!("\nOr set environment variable:");
+        println!("   export {}=your-key-here", env_var);
+    } else {
+        println!("\n\u{2714} API key configured.");
+    }
+
+    Ok(())
+}
+
+/// List available models from the current provider
+pub async fn list_models(config: &Config, pretty: bool) -> Result<()> {
+    // Check API key (skip for lmstudio)
+    if config.llm.requires_api_key() {
+        if let Err(e) = config.api_key() {
+            if pretty {
+                eprintln!("\u{26A0}\u{FE0F}  {}", e);
+            } else {
+                println!(
+                    "{}",
+                    json!({
+                        "status": "error",
+                        "error": e.to_string(),
+                        "config_path": Config::default_path().to_string_lossy()
+                    })
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    let client = LlmClient::new_without_auth(config);
+
+    if pretty {
+        println!(
+            "\u{1F4E1} Fetching models from {}...\n",
+            config.llm.base_url()
+        );
+    }
+
+    match client.fetch_available_models().await {
+        Ok(models) => {
+            if pretty {
+                if models.is_empty() {
+                    println!("\u{26A0}\u{FE0F}  No models found.");
+                    if config.llm.base_url().contains("localhost") {
+                        println!("\n\u{1F4A1} Troubleshooting:");
+                        println!("  - Make sure LM Studio is running");
+                        println!("  - Load a model in LM Studio");
+                        println!("  - Start the server: Server \u{2192} Start Server");
+                    }
+                } else {
+                    println!("\u{2714} Found {} model(s):\n", models.len());
+                    for (i, model) in models.iter().enumerate() {
+                        println!("  {}. {}", i + 1, model);
+                    }
+                }
+            } else {
+                println!(
+                    "{}",
+                    json!({
+                        "status": "success",
+                        "provider": config.llm.provider,
+                        "base_url": config.llm.base_url(),
+                        "models": models,
+                        "count": models.len()
+                    })
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if pretty {
+                eprintln!("\u{2718} Failed to fetch models: {}", e);
+                if config.llm.base_url().contains("localhost") {
+                    eprintln!("\n\u{1F4A1} Troubleshooting:");
+                    eprintln!("  - Make sure LM Studio is running");
+                    eprintln!("  - Start the server: LM Studio \u{2192} Server \u{2192} Start Server");
+                    eprintln!("  - Check URL matches: {}", config.llm.base_url());
+                } else {
+                    eprintln!("\n\u{1F4A1} Troubleshooting:");
+                    eprintln!("  - Check API key is valid");
+                    eprintln!("  - Check network connection");
+                }
+            } else {
+                println!(
+                    "{}",
+                    json!({
+                        "status": "error",
+                        "error": e.to_string()
+                    })
+                );
+            }
+            Err(e)
+        }
+    }
 }

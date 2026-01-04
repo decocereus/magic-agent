@@ -12,6 +12,7 @@ pub struct LlmClient {
     api_key: String,
     model: String,
     provider: String,
+    base_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,7 +45,61 @@ impl LlmClient {
             api_key,
             model: config.llm.model().to_string(),
             provider: config.llm.provider.clone(),
+            base_url: config.llm.base_url().to_string(),
         })
+    }
+
+    /// Create client without requiring API key (for model listing)
+    pub fn new_without_auth(config: &Config) -> Self {
+        Self {
+            api_key: config.llm.api_key.clone().unwrap_or_default(),
+            model: config.llm.model().to_string(),
+            provider: config.llm.provider.clone(),
+            base_url: config.llm.base_url().to_string(),
+        }
+    }
+
+    /// Fetch available models from the provider
+    pub async fn fetch_available_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let client = reqwest::Client::new();
+
+        let mut request = client.get(&url);
+        if !self.api_key.is_empty() && self.api_key != "dummy" {
+            request = request.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("Failed to connect to {}", url))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Failed to fetch models ({}): {}",
+                status,
+                body
+            ));
+        }
+
+        let parsed: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse models response")?;
+
+        // Handle OpenAI format: { data: [ { id: "..." }, ... ] }
+        let mut models = Vec::new();
+        if let Some(data) = parsed.get("data").and_then(|d| d.as_array()) {
+            for entry in data {
+                if let Some(id) = entry.get("id").and_then(|i| i.as_str()) {
+                    models.push(id.to_string());
+                }
+            }
+        }
+
+        Ok(models)
     }
 
     /// Generate an execution plan from a natural language request
@@ -57,7 +112,7 @@ impl LlmClient {
 
         let response_text = match self.provider.as_str() {
             "anthropic" => self.call_anthropic(&full_prompt).await?,
-            "openai" => self.call_openai(&full_prompt).await?,
+            "openai" | "lmstudio" | "custom" => self.call_openai_compatible(&full_prompt).await?,
             "openrouter" => self.call_openrouter(&full_prompt).await?,
             _ => return Err(anyhow::anyhow!("Unknown provider: {}", self.provider)),
         };
@@ -140,8 +195,10 @@ impl LlmClient {
             .ok_or_else(|| anyhow::anyhow!("Empty response from Anthropic"))
     }
 
-    async fn call_openai(&self, prompt: &str) -> Result<String> {
+    /// Call OpenAI-compatible API (OpenAI, LM Studio, custom endpoints)
+    async fn call_openai_compatible(&self, prompt: &str) -> Result<String> {
         let client = reqwest::Client::new();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let request = serde_json::json!({
             "model": self.model,
@@ -151,30 +208,41 @@ impl LlmClient {
             "max_tokens": 4096
         });
 
-        let response = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
+        let mut req_builder = client
+            .post(&url)
             .header("content-type", "application/json")
-            .json(&request)
+            .json(&request);
+
+        // Add auth header if we have an API key (LM Studio doesn't need it)
+        if !self.api_key.is_empty() && self.api_key != "dummy" {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = req_builder
             .send()
             .await
-            .context("Failed to send request to OpenAI API")?;
+            .with_context(|| format!("Failed to send request to {}", url))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, body));
+            return Err(anyhow::anyhow!(
+                "API error ({}) from {}: {}",
+                status,
+                url,
+                body
+            ));
         }
 
         let response: serde_json::Value = response
             .json()
             .await
-            .context("Failed to parse OpenAI response")?;
+            .context("Failed to parse API response")?;
 
         response["choices"][0]["message"]["content"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("Empty response from OpenAI"))
+            .ok_or_else(|| anyhow::anyhow!("Empty response from {}", self.provider))
     }
 
     async fn call_openrouter(&self, prompt: &str) -> Result<String> {

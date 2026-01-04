@@ -25,8 +25,16 @@ struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
+    /// Select AI provider interactively
+    #[arg(long)]
+    provider: bool,
+
+    /// List available models from current provider
+    #[arg(long)]
+    list_models: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -74,9 +82,28 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Load config
-    let config = config::Config::load(cli.config.as_deref())?;
+    let mut config = config::Config::load(cli.config.as_deref())?;
 
-    match cli.command {
+    // Handle --provider flag (interactive selection)
+    if cli.provider {
+        return cli::commands::select_provider(&mut config);
+    }
+
+    // Handle --list-models flag
+    if cli.list_models {
+        return cli::commands::list_models(&config, cli.pretty).await;
+    }
+
+    // Require a subcommand if no special flags were used
+    let command = cli.command.ok_or_else(|| {
+        anyhow::anyhow!(
+            "No command specified. Use --help for usage, or:\n  \
+             --provider    Select AI provider\n  \
+             --list-models List available models"
+        )
+    })?;
+
+    match command {
         Commands::Doctor => cli::commands::doctor(&config, cli.pretty).await,
         Commands::Status => cli::commands::status(&config, cli.pretty).await,
         Commands::Plan { request } => cli::commands::plan(&config, &request, cli.pretty).await,
@@ -85,7 +112,9 @@ async fn main() -> anyhow::Result<()> {
             plan,
             yes,
             dry_run,
-        } => cli::commands::apply(&config, request.as_deref(), plan.as_deref(), yes, dry_run, cli.pretty).await,
+        } => {
+            cli::commands::apply(&config, request.as_deref(), plan.as_deref(), yes, dry_run, cli.pretty)
+                .await
+        }
     }
 }
-// Temporary test

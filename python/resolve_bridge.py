@@ -601,27 +601,2091 @@ def op_export_timeline(resolve, params):
 
 
 # =============================================================================
+# Fusion & Composition Operations
+# =============================================================================
+
+def op_insert_fusion_composition(resolve, params):
+    """Insert a Fusion composition into timeline."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.InsertFusionCompositionIntoTimeline()
+    if result:
+        return success({"timeline_item": result.GetName() if result else "Fusion Composition"})
+    return error("Failed to insert Fusion composition")
+
+
+def op_create_fusion_clip(resolve, params):
+    """Create a Fusion clip from timeline items."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Get clips to convert
+    track = selector.get("track", 1)
+    clips = []
+    
+    if selector.get("all"):
+        items = timeline.GetItemListInTrack("video", track)
+        if items:
+            clips = list(items)
+    elif "indices" in selector:
+        items = timeline.GetItemListInTrack("video", track)
+        if items:
+            for idx in selector["indices"]:
+                if 0 <= idx < len(items):
+                    clips.append(items[idx])
+    elif "index" in selector:
+        items = timeline.GetItemListInTrack("video", track)
+        if items and 0 <= selector["index"] < len(items):
+            clips = [items[selector["index"]]]
+    
+    if not clips:
+        return error("No clips selected")
+    
+    result = timeline.CreateFusionClip(clips)
+    if result:
+        return success({"timeline_item": result.GetName() if result else "Fusion Clip"})
+    return error("Failed to create Fusion clip")
+
+
+def op_add_fusion_comp_to_clip(resolve, params):
+    """Add a Fusion composition to a specific clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    comp = clip.AddFusionComp()
+    if comp:
+        return success({"fusion_comp": "Added"})
+    return error("Failed to add Fusion composition to clip")
+
+
+def op_create_compound_clip(resolve, params):
+    """Create a compound clip from timeline items."""
+    selector = params.get("selector", {})
+    name = params.get("name", "Compound Clip")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    clips = []
+    
+    if selector.get("all"):
+        items = timeline.GetItemListInTrack("video", track)
+        if items:
+            clips = list(items)
+    elif "indices" in selector:
+        items = timeline.GetItemListInTrack("video", track)
+        if items:
+            for idx in selector["indices"]:
+                if 0 <= idx < len(items):
+                    clips.append(items[idx])
+    elif "index" in selector:
+        items = timeline.GetItemListInTrack("video", track)
+        if items and 0 <= selector["index"] < len(items):
+            clips = [items[selector["index"]]]
+    
+    if not clips:
+        return error("No clips selected")
+    
+    result = timeline.CreateCompoundClip(clips, {"name": name})
+    if result:
+        return success({"timeline_item": result.GetName() if result else name})
+    return error("Failed to create compound clip")
+
+
+# =============================================================================
+# Generator & Title Operations
+# =============================================================================
+
+def op_insert_generator(resolve, params):
+    """Insert a generator into timeline."""
+    generator_name = params.get("name", "")
+    generator_type = params.get("type", "standard")  # standard, fusion, ofx
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = None
+    if generator_type == "fusion":
+        result = timeline.InsertFusionGeneratorIntoTimeline(generator_name)
+    elif generator_type == "ofx":
+        result = timeline.InsertOFXGeneratorIntoTimeline(generator_name)
+    else:
+        result = timeline.InsertGeneratorIntoTimeline(generator_name)
+    
+    if result:
+        return success({"timeline_item": result.GetName() if result else generator_name})
+    return error(f"Failed to insert generator: {generator_name}")
+
+
+def op_insert_title(resolve, params):
+    """Insert a title into timeline."""
+    title_name = params.get("name", "")
+    title_type = params.get("type", "standard")  # standard, fusion
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    if title_type == "fusion":
+        result = timeline.InsertFusionTitleIntoTimeline(title_name)
+    else:
+        result = timeline.InsertTitleIntoTimeline(title_name)
+    
+    if result:
+        return success({"timeline_item": result.GetName() if result else title_name})
+    return error(f"Failed to insert title: {title_name}")
+
+
+# =============================================================================
+# Clip AI/Processing Operations
+# =============================================================================
+
+def op_stabilize_clip(resolve, params):
+    """Stabilize a clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.Stabilize()
+    if result:
+        return success({"stabilized": True})
+    return error("Failed to stabilize clip")
+
+
+def op_smart_reframe(resolve, params):
+    """Apply Smart Reframe to a clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.SmartReframe()
+    if result:
+        return success({"reframed": True})
+    return error("Failed to apply Smart Reframe")
+
+
+def op_create_magic_mask(resolve, params):
+    """Create a Magic Mask on a clip."""
+    selector = params.get("selector", {})
+    mode = params.get("mode", "F")  # F=forward, B=backward, BI=bidirectional
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.CreateMagicMask(mode)
+    if result:
+        return success({"magic_mask_created": True, "mode": mode})
+    return error("Failed to create Magic Mask")
+
+
+def op_detect_scene_cuts(resolve, params):
+    """Detect and create scene cuts in timeline."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.DetectSceneCuts()
+    if result:
+        return success({"scene_cuts_detected": True})
+    return error("Failed to detect scene cuts")
+
+
+# =============================================================================
+# Clip Management Operations
+# =============================================================================
+
+def op_delete_clips(resolve, params):
+    """Delete clips from timeline."""
+    selector = params.get("selector", {})
+    ripple = params.get("ripple", False)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    clips = []
+    
+    if selector.get("all"):
+        items = timeline.GetItemListInTrack(track_type, track)
+        if items:
+            clips = list(items)
+    elif "indices" in selector:
+        items = timeline.GetItemListInTrack(track_type, track)
+        if items:
+            for idx in selector["indices"]:
+                if 0 <= idx < len(items):
+                    clips.append(items[idx])
+    elif "index" in selector:
+        items = timeline.GetItemListInTrack(track_type, track)
+        if items and 0 <= selector["index"] < len(items):
+            clips = [items[selector["index"]]]
+    
+    if not clips:
+        return error("No clips selected")
+    
+    result = timeline.DeleteClips(clips, ripple)
+    if result:
+        return success({"deleted": len(clips), "ripple": ripple})
+    return error("Failed to delete clips")
+
+
+def op_set_clips_linked(resolve, params):
+    """Link or unlink clips."""
+    selector = params.get("selector", {})
+    linked = params.get("linked", True)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    clips = []
+    
+    if "indices" in selector:
+        items = timeline.GetItemListInTrack("video", track)
+        if items:
+            for idx in selector["indices"]:
+                if 0 <= idx < len(items):
+                    clips.append(items[idx])
+    
+    if not clips:
+        return error("No clips selected (need at least 2)")
+    
+    result = timeline.SetClipsLinked(clips, linked)
+    if result:
+        return success({"linked": linked, "clips": len(clips)})
+    return error("Failed to link/unlink clips")
+
+
+def op_set_clip_enabled(resolve, params):
+    """Enable or disable a clip."""
+    selector = params.get("selector", {})
+    enabled = params.get("enabled", True)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    modified = 0
+    
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+    
+    if selector.get("all"):
+        for item in items:
+            if item.SetClipEnabled(enabled):
+                modified += 1
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            if items[idx].SetClipEnabled(enabled):
+                modified = 1
+    
+    return success({"modified": modified, "enabled": enabled})
+
+
+def op_set_clip_color(resolve, params):
+    """Set clip color label."""
+    selector = params.get("selector", {})
+    color = params.get("color", "")  # Orange, Apricot, Yellow, Lime, Olive, Green, Teal, Navy, Blue, Purple, Violet, Pink, Tan, Beige, Brown, Chocolate
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    modified = 0
+    
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+    
+    if selector.get("all"):
+        for item in items:
+            if color:
+                if item.SetClipColor(color):
+                    modified += 1
+            else:
+                if item.ClearClipColor():
+                    modified += 1
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            if color:
+                if items[idx].SetClipColor(color):
+                    modified = 1
+            else:
+                if items[idx].ClearClipColor():
+                    modified = 1
+    
+    return success({"modified": modified, "color": color if color else "cleared"})
+
+
+# =============================================================================
+# Timeline Playhead & Navigation
+# =============================================================================
+
+def op_set_current_timecode(resolve, params):
+    """Set the playhead position."""
+    timecode = params.get("timecode", "00:00:00:00")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.SetCurrentTimecode(timecode)
+    if result:
+        return success({"timecode": timecode})
+    return error(f"Failed to set timecode to {timecode}")
+
+
+def op_get_current_timecode(resolve, params):
+    """Get current playhead position."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    timecode = timeline.GetCurrentTimecode()
+    return success({"timecode": timecode})
+
+
+# =============================================================================
+# Audio Operations
+# =============================================================================
+
+def op_create_subtitles_from_audio(resolve, params):
+    """Create subtitles from audio using auto-captioning."""
+    language = params.get("language", "auto")  # auto, english, spanish, french, etc.
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Map language names to API constants (would need resolve object)
+    settings = {}
+    # For now, use defaults
+    
+    result = timeline.CreateSubtitlesFromAudio(settings)
+    if result:
+        return success({"subtitles_created": True})
+    return error("Failed to create subtitles from audio")
+
+
+# =============================================================================
+# Page Navigation
+# =============================================================================
+
+def op_open_page(resolve, params):
+    """Switch to a specific Resolve page."""
+    page = params.get("page", "edit")  # media, cut, edit, fusion, color, fairlight, deliver
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.OpenPage(page)
+    if result:
+        return success({"page": page})
+    return error(f"Failed to open page: {page}")
+
+
+def op_get_current_page(resolve, params):
+    """Get the currently active page."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    page = resolve.GetCurrentPage()
+    return success({"page": page})
+
+
+# =============================================================================
+# Grab Still
+# =============================================================================
+
+def op_grab_still(resolve, params):
+    """Grab a still from the current frame."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    still = timeline.GrabStill()
+    if still:
+        return success({"still_grabbed": True})
+    return error("Failed to grab still")
+
+
+# =============================================================================
+# Delete Track
+# =============================================================================
+
+def op_delete_track(resolve, params):
+    """Delete a track from the timeline."""
+    track_type = params.get("type", "video")
+    index = params.get("index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.DeleteTrack(track_type, index)
+    if result:
+        return success({"deleted": True, "type": track_type, "index": index})
+    return error(f"Failed to delete {track_type} track {index}")
+
+
+# =============================================================================
+# Color Grading Operations
+# =============================================================================
+
+def op_apply_lut(resolve, params):
+    """Apply LUT to a clip's node."""
+    selector = params.get("selector", {})
+    lut_path = params.get("lut_path", "")
+    node_index = params.get("node_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    result = graph.SetLUT(node_index, lut_path)
+    if result:
+        return success({"lut_applied": True, "path": lut_path, "node": node_index})
+    return error(f"Failed to apply LUT: {lut_path}")
+
+
+def op_get_lut(resolve, params):
+    """Get LUT path from a clip's node."""
+    selector = params.get("selector", {})
+    node_index = params.get("node_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    lut_path = graph.GetLUT(node_index)
+    return success({"lut_path": lut_path, "node": node_index})
+
+
+def op_set_cdl(resolve, params):
+    """Set CDL values on a clip."""
+    selector = params.get("selector", {})
+    node_index = params.get("node_index", 1)
+    slope = params.get("slope", "1.0 1.0 1.0")
+    offset = params.get("offset", "0.0 0.0 0.0")
+    power = params.get("power", "1.0 1.0 1.0")
+    saturation = params.get("saturation", "1.0")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    cdl_map = {
+        "NodeIndex": str(node_index),
+        "Slope": slope,
+        "Offset": offset,
+        "Power": power,
+        "Saturation": saturation
+    }
+    
+    result = clip.SetCDL(cdl_map)
+    if result:
+        return success({"cdl_set": True, "node": node_index})
+    return error("Failed to set CDL values")
+
+
+def op_copy_grades(resolve, params):
+    """Copy grades from one clip to others."""
+    source_selector = params.get("source", {})
+    target_selector = params.get("targets", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Get source clip
+    source_track = source_selector.get("track", 1)
+    source_index = source_selector.get("index", 0)
+    
+    source_items = timeline.GetItemListInTrack("video", source_track)
+    if not source_items or source_index >= len(source_items):
+        return error("Source clip not found")
+    
+    source_clip = source_items[source_index]
+    
+    # Get target clips
+    target_track = target_selector.get("track", 1)
+    target_clips = []
+    
+    if target_selector.get("all"):
+        items = timeline.GetItemListInTrack("video", target_track)
+        if items:
+            target_clips = [item for item in items if item != source_clip]
+    elif "indices" in target_selector:
+        items = timeline.GetItemListInTrack("video", target_track)
+        if items:
+            for idx in target_selector["indices"]:
+                if 0 <= idx < len(items) and items[idx] != source_clip:
+                    target_clips.append(items[idx])
+    
+    if not target_clips:
+        return error("No target clips found")
+    
+    result = source_clip.CopyGrades(target_clips)
+    if result:
+        return success({"copied_to": len(target_clips)})
+    return error("Failed to copy grades")
+
+
+def op_reset_grades(resolve, params):
+    """Reset all grades on a clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    result = graph.ResetAllGrades()
+    if result:
+        return success({"grades_reset": True})
+    return error("Failed to reset grades")
+
+
+def op_add_color_version(resolve, params):
+    """Add a new color version to a clip."""
+    selector = params.get("selector", {})
+    version_name = params.get("name", "Version")
+    version_type = params.get("type", 0)  # 0=local, 1=remote
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.AddVersion(version_name, version_type)
+    if result:
+        return success({"version_added": version_name, "type": "local" if version_type == 0 else "remote"})
+    return error(f"Failed to add color version: {version_name}")
+
+
+def op_load_color_version(resolve, params):
+    """Load a color version on a clip."""
+    selector = params.get("selector", {})
+    version_name = params.get("name", "")
+    version_type = params.get("type", 0)  # 0=local, 1=remote
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.LoadVersionByName(version_name, version_type)
+    if result:
+        return success({"version_loaded": version_name})
+    return error(f"Failed to load color version: {version_name}")
+
+
+def op_get_color_versions(resolve, params):
+    """Get list of color versions for a clip."""
+    selector = params.get("selector", {})
+    version_type = params.get("type", 0)  # 0=local, 1=remote
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    versions = clip.GetVersionNameList(version_type)
+    current = clip.GetCurrentVersion()
+    
+    return success({
+        "versions": versions or [],
+        "current": current,
+        "type": "local" if version_type == 0 else "remote"
+    })
+
+
+def op_delete_color_version(resolve, params):
+    """Delete a color version from a clip."""
+    selector = params.get("selector", {})
+    version_name = params.get("name", "")
+    version_type = params.get("type", 0)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.DeleteVersionByName(version_name, version_type)
+    if result:
+        return success({"version_deleted": version_name})
+    return error(f"Failed to delete color version: {version_name}")
+
+
+# =============================================================================
+# Color Group Operations
+# =============================================================================
+
+def op_create_color_group(resolve, params):
+    """Create a new color group."""
+    name = params.get("name", "Color Group")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.AddColorGroup(name)
+    if result:
+        return success({"color_group_created": name})
+    return error(f"Failed to create color group: {name}")
+
+
+def op_get_color_groups(resolve, params):
+    """Get list of color groups."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    groups = project.GetColorGroupsList()
+    group_names = [g.GetName() for g in groups] if groups else []
+    
+    return success({"color_groups": group_names})
+
+
+def op_assign_to_color_group(resolve, params):
+    """Assign a clip to a color group."""
+    selector = params.get("selector", {})
+    group_name = params.get("group", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Find the color group
+    groups = project.GetColorGroupsList()
+    target_group = None
+    if groups:
+        for g in groups:
+            if g.GetName() == group_name:
+                target_group = g
+                break
+    
+    if not target_group:
+        return error(f"Color group not found: {group_name}")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.AssignToColorGroup(target_group)
+    if result:
+        return success({"assigned_to": group_name})
+    return error(f"Failed to assign clip to color group: {group_name}")
+
+
+def op_remove_from_color_group(resolve, params):
+    """Remove a clip from its color group."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.RemoveFromColorGroup()
+    if result:
+        return success({"removed_from_group": True})
+    return error("Failed to remove clip from color group")
+
+
+def op_delete_color_group(resolve, params):
+    """Delete a color group."""
+    name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    groups = project.GetColorGroupsList()
+    target_group = None
+    if groups:
+        for g in groups:
+            if g.GetName() == name:
+                target_group = g
+                break
+    
+    if not target_group:
+        return error(f"Color group not found: {name}")
+    
+    result = project.DeleteColorGroup(target_group)
+    if result:
+        return success({"color_group_deleted": name})
+    return error(f"Failed to delete color group: {name}")
+
+
+# =============================================================================
+# Media Pool Operations
+# =============================================================================
+
+def op_create_media_pool_folder(resolve, params):
+    """Create a folder in the media pool."""
+    name = params.get("name", "New Folder")
+    parent = params.get("parent", None)  # None = current folder
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    
+    if parent:
+        # Find parent folder
+        root = media_pool.GetRootFolder()
+        folders = root.GetSubFolderList() or []
+        target_folder = None
+        for f in folders:
+            if f.GetName() == parent:
+                target_folder = f
+                break
+        if not target_folder:
+            target_folder = media_pool.GetCurrentFolder()
+    else:
+        target_folder = media_pool.GetCurrentFolder()
+    
+    result = media_pool.AddSubFolder(target_folder, name)
+    if result:
+        return success({"folder_created": name})
+    return error(f"Failed to create folder: {name}")
+
+
+def op_set_current_media_pool_folder(resolve, params):
+    """Set the current media pool folder."""
+    name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    if not name or name == "Root":
+        media_pool.SetCurrentFolder(root)
+        return success({"current_folder": "Root"})
+    
+    # Find folder
+    folders = root.GetSubFolderList() or []
+    for f in folders:
+        if f.GetName() == name:
+            media_pool.SetCurrentFolder(f)
+            return success({"current_folder": name})
+    
+    return error(f"Folder not found: {name}")
+
+
+def op_move_media_pool_clips(resolve, params):
+    """Move clips between media pool folders."""
+    clip_names = params.get("clips", [])
+    target_folder = params.get("target_folder", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    # Find target folder
+    target = None
+    if not target_folder or target_folder == "Root":
+        target = root
+    else:
+        folders = root.GetSubFolderList() or []
+        for f in folders:
+            if f.GetName() == target_folder:
+                target = f
+                break
+    
+    if not target:
+        return error(f"Target folder not found: {target_folder}")
+    
+    # Find clips
+    clips_to_move = []
+    all_clips = root.GetClipList() or []
+    for clip in all_clips:
+        if clip.GetName() in clip_names:
+            clips_to_move.append(clip)
+    
+    if not clips_to_move:
+        return error("No clips found to move")
+    
+    result = media_pool.MoveClips(clips_to_move, target)
+    if result:
+        return success({"moved": len(clips_to_move), "to": target_folder or "Root"})
+    return error("Failed to move clips")
+
+
+def op_delete_media_pool_clips(resolve, params):
+    """Delete clips from media pool."""
+    clip_names = params.get("clips", [])
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    clips_to_delete = []
+    all_clips = root.GetClipList() or []
+    for clip in all_clips:
+        if clip.GetName() in clip_names:
+            clips_to_delete.append(clip)
+    
+    if not clips_to_delete:
+        return error("No clips found to delete")
+    
+    result = media_pool.DeleteClips(clips_to_delete)
+    if result:
+        return success({"deleted": len(clips_to_delete)})
+    return error("Failed to delete clips from media pool")
+
+
+def op_set_clip_metadata(resolve, params):
+    """Set metadata on a media pool clip."""
+    clip_name = params.get("clip", "")
+    metadata = params.get("metadata", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    target_clip = None
+    all_clips = root.GetClipList() or []
+    for clip in all_clips:
+        if clip.GetName() == clip_name:
+            target_clip = clip
+            break
+    
+    if not target_clip:
+        return error(f"Clip not found: {clip_name}")
+    
+    result = target_clip.SetMetadata(metadata)
+    if result:
+        return success({"metadata_set": True, "clip": clip_name})
+    return error("Failed to set metadata")
+
+
+def op_get_clip_metadata(resolve, params):
+    """Get metadata from a media pool clip."""
+    clip_name = params.get("clip", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    target_clip = None
+    all_clips = root.GetClipList() or []
+    for clip in all_clips:
+        if clip.GetName() == clip_name:
+            target_clip = clip
+            break
+    
+    if not target_clip:
+        return error(f"Clip not found: {clip_name}")
+    
+    metadata = target_clip.GetMetadata()
+    return success({"metadata": metadata or {}, "clip": clip_name})
+
+
+def op_relink_clips(resolve, params):
+    """Relink offline clips to a new folder path."""
+    clip_names = params.get("clips", [])
+    folder_path = params.get("folder_path", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    clips_to_relink = []
+    all_clips = root.GetClipList() or []
+    for clip in all_clips:
+        if clip.GetName() in clip_names:
+            clips_to_relink.append(clip)
+    
+    if not clips_to_relink:
+        return error("No clips found to relink")
+    
+    result = media_pool.RelinkClips(clips_to_relink, folder_path)
+    if result:
+        return success({"relinked": len(clips_to_relink), "path": folder_path})
+    return error("Failed to relink clips")
+
+
+def op_delete_media_pool_folders(resolve, params):
+    """Delete folders from media pool."""
+    folder_names = params.get("folders", [])
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    folders_to_delete = []
+    all_folders = root.GetSubFolderList() or []
+    for folder in all_folders:
+        if folder.GetName() in folder_names:
+            folders_to_delete.append(folder)
+    
+    if not folders_to_delete:
+        return error("No folders found to delete")
+    
+    result = media_pool.DeleteFolders(folders_to_delete)
+    if result:
+        return success({"deleted": len(folders_to_delete)})
+    return error("Failed to delete folders")
+
+
+# =============================================================================
+# Flag Operations
+# =============================================================================
+
+def op_add_flag(resolve, params):
+    """Add a flag to a timeline clip."""
+    selector = params.get("selector", {})
+    color = params.get("color", "Red")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    modified = 0
+    
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+    
+    if selector.get("all"):
+        for item in items:
+            if item.AddFlag(color):
+                modified += 1
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            if items[idx].AddFlag(color):
+                modified = 1
+    
+    return success({"flags_added": modified, "color": color})
+
+
+def op_get_flags(resolve, params):
+    """Get flags from a timeline clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    flags = items[index].GetFlagList()
+    return success({"flags": flags or []})
+
+
+def op_clear_flags(resolve, params):
+    """Clear flags from a timeline clip."""
+    selector = params.get("selector", {})
+    color = params.get("color", "All")  # specific color or "All"
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    modified = 0
+    
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+    
+    if selector.get("all"):
+        for item in items:
+            if item.ClearFlags(color):
+                modified += 1
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            if items[idx].ClearFlags(color):
+                modified = 1
+    
+    return success({"flags_cleared": modified, "color": color})
+
+
+# =============================================================================
+# Take Operations
+# =============================================================================
+
+def op_add_take(resolve, params):
+    """Add a take to a timeline clip."""
+    selector = params.get("selector", {})
+    media_pool_clip = params.get("media_pool_clip", "")
+    start_frame = params.get("start_frame", None)
+    end_frame = params.get("end_frame", None)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Find media pool clip
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    mp_clip = None
+    for clip in root.GetClipList() or []:
+        if clip.GetName() == media_pool_clip:
+            mp_clip = clip
+            break
+    
+    if not mp_clip:
+        return error(f"Media pool clip not found: {media_pool_clip}")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    
+    if start_frame is not None and end_frame is not None:
+        result = clip.AddTake(mp_clip, start_frame, end_frame)
+    else:
+        result = clip.AddTake(mp_clip)
+    
+    if result:
+        return success({"take_added": True, "media": media_pool_clip})
+    return error("Failed to add take")
+
+
+def op_select_take(resolve, params):
+    """Select a take on a timeline clip."""
+    selector = params.get("selector", {})
+    take_index = params.get("take_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.SelectTakeByIndex(take_index)
+    if result:
+        return success({"take_selected": take_index})
+    return error(f"Failed to select take {take_index}")
+
+
+def op_get_takes(resolve, params):
+    """Get takes info for a timeline clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    takes_count = clip.GetTakesCount()
+    selected = clip.GetSelectedTakeIndex()
+    
+    takes = []
+    for i in range(1, takes_count + 1):
+        take_info = clip.GetTakeByIndex(i)
+        if take_info:
+            takes.append({
+                "index": i,
+                "start_frame": take_info.get("startFrame"),
+                "end_frame": take_info.get("endFrame")
+            })
+    
+    return success({"takes": takes, "selected": selected, "count": takes_count})
+
+
+def op_finalize_take(resolve, params):
+    """Finalize take selection on a clip."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.FinalizeTake()
+    if result:
+        return success({"take_finalized": True})
+    return error("Failed to finalize take")
+
+
+def op_delete_take(resolve, params):
+    """Delete a take from a clip."""
+    selector = params.get("selector", {})
+    take_index = params.get("take_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    result = clip.DeleteTakeByIndex(take_index)
+    if result:
+        return success({"take_deleted": take_index})
+    return error(f"Failed to delete take {take_index}")
+
+
+# =============================================================================
+# Timeline Import
+# =============================================================================
+
+def op_import_timeline_from_file(resolve, params):
+    """Import timeline from AAF/EDL/XML/FCPXML file."""
+    file_path = params.get("path", "")
+    timeline_name = params.get("name", None)
+    import_source_clips = params.get("import_source_clips", True)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    
+    import_options = {
+        "importSourceClips": import_source_clips,
+    }
+    if timeline_name:
+        import_options["timelineName"] = timeline_name
+    
+    result = media_pool.ImportTimelineFromFile(file_path, import_options)
+    if result:
+        return success({"timeline_imported": result.GetName() if result else timeline_name or file_path})
+    return error(f"Failed to import timeline from: {file_path}")
+
+
+# =============================================================================
+# Enhanced Render Operations
+# =============================================================================
+
+def op_set_render_settings(resolve, params):
+    """Set detailed render settings."""
+    settings = params.get("settings", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.SetRenderSettings(settings)
+    if result:
+        return success({"settings_applied": True})
+    return error("Failed to set render settings")
+
+
+def op_get_render_formats(resolve, params):
+    """Get available render formats."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    formats = project.GetRenderFormats()
+    return success({"formats": formats or {}})
+
+
+def op_get_render_codecs(resolve, params):
+    """Get available codecs for a render format."""
+    format_name = params.get("format", "mp4")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    codecs = project.GetRenderCodecs(format_name)
+    return success({"codecs": codecs or {}, "format": format_name})
+
+
+def op_set_render_format_and_codec(resolve, params):
+    """Set render format and codec."""
+    format_name = params.get("format", "mp4")
+    codec = params.get("codec", "H264")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.SetCurrentRenderFormatAndCodec(format_name, codec)
+    if result:
+        return success({"format": format_name, "codec": codec})
+    return error(f"Failed to set format/codec: {format_name}/{codec}")
+
+
+def op_get_render_presets(resolve, params):
+    """Get available render presets."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    presets = project.GetRenderPresetList()
+    return success({"presets": presets or []})
+
+
+def op_load_render_preset(resolve, params):
+    """Load a render preset."""
+    preset_name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.LoadRenderPreset(preset_name)
+    if result:
+        return success({"preset_loaded": preset_name})
+    return error(f"Failed to load render preset: {preset_name}")
+
+
+def op_save_render_preset(resolve, params):
+    """Save current render settings as a preset."""
+    preset_name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.SaveAsNewRenderPreset(preset_name)
+    if result:
+        return success({"preset_saved": preset_name})
+    return error(f"Failed to save render preset: {preset_name}")
+
+
+def op_delete_render_preset(resolve, params):
+    """Delete a render preset."""
+    preset_name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.DeleteRenderPreset(preset_name)
+    if result:
+        return success({"preset_deleted": preset_name})
+    return error(f"Failed to delete render preset: {preset_name}")
+
+
+def op_get_render_jobs(resolve, params):
+    """Get list of render jobs in queue."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    jobs = project.GetRenderJobList()
+    return success({"jobs": jobs or []})
+
+
+def op_delete_render_job(resolve, params):
+    """Delete a render job."""
+    job_id = params.get("job_id", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.DeleteRenderJob(job_id)
+    if result:
+        return success({"job_deleted": job_id})
+    return error(f"Failed to delete render job: {job_id}")
+
+
+def op_delete_all_render_jobs(resolve, params):
+    """Delete all render jobs."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.DeleteAllRenderJobs()
+    if result:
+        return success({"all_jobs_deleted": True})
+    return error("Failed to delete all render jobs")
+
+
+def op_get_render_job_status(resolve, params):
+    """Get status of a render job."""
+    job_id = params.get("job_id", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    status = project.GetRenderJobStatus(job_id)
+    return success({"status": status or {}})
+
+
+# =============================================================================
+# Project Operations
+# =============================================================================
+
+def op_save_project(resolve, params):
+    """Save the current project."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    pm = resolve.GetProjectManager()
+    result = pm.SaveProject()
+    if result:
+        return success({"saved": True, "project": project.GetName()})
+    return error("Failed to save project")
+
+
+def op_export_project(resolve, params):
+    """Export project to .drp file."""
+    file_path = params.get("path", "")
+    with_stills_and_luts = params.get("with_stills_and_luts", True)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    pm = resolve.GetProjectManager()
+    result = pm.ExportProject(project.GetName(), file_path, with_stills_and_luts)
+    if result:
+        return success({"exported": True, "path": file_path})
+    return error(f"Failed to export project to: {file_path}")
+
+
+def op_get_project_setting(resolve, params):
+    """Get a project setting."""
+    setting_name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    if setting_name:
+        value = project.GetSetting(setting_name)
+        return success({"setting": setting_name, "value": value})
+    else:
+        # Get all settings
+        settings = project.GetSetting()
+        return success({"settings": settings or {}})
+
+
+def op_set_project_setting(resolve, params):
+    """Set a project setting."""
+    setting_name = params.get("name", "")
+    setting_value = params.get("value", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.SetSetting(setting_name, setting_value)
+    if result:
+        return success({"setting": setting_name, "value": setting_value})
+    return error(f"Failed to set project setting: {setting_name}")
+
+
+def op_get_timeline_setting(resolve, params):
+    """Get a timeline setting."""
+    setting_name = params.get("name", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    if setting_name:
+        value = timeline.GetSetting(setting_name)
+        return success({"setting": setting_name, "value": value})
+    else:
+        settings = timeline.GetSetting()
+        return success({"settings": settings or {}})
+
+
+def op_set_timeline_setting(resolve, params):
+    """Set a timeline setting."""
+    setting_name = params.get("name", "")
+    setting_value = params.get("value", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.SetSetting(setting_name, setting_value)
+    if result:
+        return success({"setting": setting_name, "value": setting_value})
+    return error(f"Failed to set timeline setting: {setting_name}")
+
+
+# =============================================================================
+# Keyframe Mode
+# =============================================================================
+
+def op_set_keyframe_mode(resolve, params):
+    """Set the keyframe mode."""
+    mode = params.get("mode", 0)  # 0=All, 1=Color, 2=Sizing
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.SetKeyframeMode(mode)
+    mode_names = {0: "All", 1: "Color", 2: "Sizing"}
+    if result:
+        return success({"keyframe_mode": mode_names.get(mode, str(mode))})
+    return error("Failed to set keyframe mode")
+
+
+def op_get_keyframe_mode(resolve, params):
+    """Get the current keyframe mode."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    mode = resolve.GetKeyframeMode()
+    mode_names = {0: "All", 1: "Color", 2: "Sizing"}
+    return success({"keyframe_mode": mode_names.get(mode, str(mode)), "value": mode})
+
+
+# =============================================================================
+# Gallery & Stills
+# =============================================================================
+
+def op_export_still(resolve, params):
+    """Export current frame as a still image."""
+    file_path = params.get("path", "")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.ExportCurrentFrameAsStill(file_path)
+    if result:
+        return success({"exported": True, "path": file_path})
+    return error(f"Failed to export still to: {file_path}")
+
+
+def op_apply_grade_from_drx(resolve, params):
+    """Apply grade from a DRX file."""
+    selector = params.get("selector", {})
+    drx_path = params.get("path", "")
+    grade_mode = params.get("grade_mode", 0)  # 0=No keyframes, 1=Source timecode, 2=Start frames
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    result = graph.ApplyGradeFromDRX(drx_path, grade_mode)
+    if result:
+        return success({"grade_applied": True, "path": drx_path})
+    return error(f"Failed to apply grade from: {drx_path}")
+
+
+def op_get_gallery_albums(resolve, params):
+    """Get list of gallery albums."""
+    album_type = params.get("type", "stills")  # stills or powergrade
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    if album_type == "powergrade":
+        albums = gallery.GetGalleryPowerGradeAlbums()
+    else:
+        albums = gallery.GetGalleryStillAlbums()
+    
+    album_names = []
+    if albums:
+        for album in albums:
+            album_names.append(gallery.GetAlbumName(album))
+    
+    return success({"albums": album_names, "type": album_type})
+
+
+# =============================================================================
+# Cache Operations
+# =============================================================================
+
+def op_set_clip_cache_mode(resolve, params):
+    """Set clip render cache mode."""
+    selector = params.get("selector", {})
+    cache_type = params.get("cache_type", "color")  # color or fusion
+    enabled = params.get("enabled", True)  # or "auto" for fusion
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    
+    if cache_type == "fusion":
+        # Fusion cache can be "auto", True, or False
+        result = clip.SetFusionOutputCache(enabled)
+    else:
+        result = clip.SetColorOutputCache(enabled)
+    
+    if result:
+        return success({"cache_set": True, "type": cache_type, "enabled": enabled})
+    return error(f"Failed to set {cache_type} cache mode")
+
+
+def op_get_clip_cache_mode(resolve, params):
+    """Get clip render cache mode."""
+    selector = params.get("selector", {})
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+    
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+    
+    clip = items[index]
+    
+    color_cache = clip.GetIsColorOutputCacheEnabled()
+    fusion_cache = clip.GetIsFusionOutputCacheEnabled()
+    
+    return success({
+        "color_cache_enabled": color_cache,
+        "fusion_cache_enabled": fusion_cache
+    })
+
+
+def op_refresh_lut_list(resolve, params):
+    """Refresh the LUT list."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    result = project.RefreshLUTList()
+    if result:
+        return success({"lut_list_refreshed": True})
+    return error("Failed to refresh LUT list")
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
 OPERATIONS = {
+    # Core
     "check_connection": op_check_connection,
     "get_context": op_get_context,
+    
+    # Media
     "import_media": op_import_media,
     "append_to_timeline": op_append_to_timeline,
     "create_timeline": op_create_timeline,
+    
+    # Clip Properties
     "set_clip_property": op_set_clip_property,
+    "set_clip_enabled": op_set_clip_enabled,
+    "set_clip_color": op_set_clip_color,
+    
+    # Markers
     "add_marker": op_add_marker,
     "delete_marker": op_delete_marker,
+    
+    # Tracks
     "add_track": op_add_track,
+    "delete_track": op_delete_track,
     "set_track_name": op_set_track_name,
     "enable_track": op_enable_track,
     "lock_track": op_lock_track,
+    
+    # Render
     "add_render_job": op_add_render_job,
     "start_render": op_start_render,
+    "set_render_settings": op_set_render_settings,
+    "get_render_formats": op_get_render_formats,
+    "get_render_codecs": op_get_render_codecs,
+    "set_render_format_and_codec": op_set_render_format_and_codec,
+    "get_render_presets": op_get_render_presets,
+    "load_render_preset": op_load_render_preset,
+    "save_render_preset": op_save_render_preset,
+    "delete_render_preset": op_delete_render_preset,
+    "get_render_jobs": op_get_render_jobs,
+    "delete_render_job": op_delete_render_job,
+    "delete_all_render_jobs": op_delete_all_render_jobs,
+    "get_render_job_status": op_get_render_job_status,
+    
+    # Timeline
     "set_timeline": op_set_timeline,
     "duplicate_timeline": op_duplicate_timeline,
     "export_timeline": op_export_timeline,
+    "import_timeline_from_file": op_import_timeline_from_file,
+    
+    # Fusion & Compositions
+    "insert_fusion_composition": op_insert_fusion_composition,
+    "create_fusion_clip": op_create_fusion_clip,
+    "add_fusion_comp_to_clip": op_add_fusion_comp_to_clip,
+    "create_compound_clip": op_create_compound_clip,
+    
+    # Generators & Titles
+    "insert_generator": op_insert_generator,
+    "insert_title": op_insert_title,
+    
+    # AI/Processing
+    "stabilize_clip": op_stabilize_clip,
+    "smart_reframe": op_smart_reframe,
+    "create_magic_mask": op_create_magic_mask,
+    "detect_scene_cuts": op_detect_scene_cuts,
+    
+    # Clip Management
+    "delete_clips": op_delete_clips,
+    "set_clips_linked": op_set_clips_linked,
+    
+    # Navigation
+    "set_current_timecode": op_set_current_timecode,
+    "get_current_timecode": op_get_current_timecode,
+    "open_page": op_open_page,
+    "get_current_page": op_get_current_page,
+    
+    # Audio
+    "create_subtitles_from_audio": op_create_subtitles_from_audio,
+    
+    # Stills & Gallery
+    "grab_still": op_grab_still,
+    "export_still": op_export_still,
+    "apply_grade_from_drx": op_apply_grade_from_drx,
+    "get_gallery_albums": op_get_gallery_albums,
+    
+    # Color Grading
+    "apply_lut": op_apply_lut,
+    "get_lut": op_get_lut,
+    "set_cdl": op_set_cdl,
+    "copy_grades": op_copy_grades,
+    "reset_grades": op_reset_grades,
+    "add_color_version": op_add_color_version,
+    "load_color_version": op_load_color_version,
+    "get_color_versions": op_get_color_versions,
+    "delete_color_version": op_delete_color_version,
+    
+    # Color Groups
+    "create_color_group": op_create_color_group,
+    "get_color_groups": op_get_color_groups,
+    "assign_to_color_group": op_assign_to_color_group,
+    "remove_from_color_group": op_remove_from_color_group,
+    "delete_color_group": op_delete_color_group,
+    
+    # Media Pool
+    "create_media_pool_folder": op_create_media_pool_folder,
+    "set_current_media_pool_folder": op_set_current_media_pool_folder,
+    "move_media_pool_clips": op_move_media_pool_clips,
+    "delete_media_pool_clips": op_delete_media_pool_clips,
+    "delete_media_pool_folders": op_delete_media_pool_folders,
+    "set_clip_metadata": op_set_clip_metadata,
+    "get_clip_metadata": op_get_clip_metadata,
+    "relink_clips": op_relink_clips,
+    
+    # Flags
+    "add_flag": op_add_flag,
+    "get_flags": op_get_flags,
+    "clear_flags": op_clear_flags,
+    
+    # Takes
+    "add_take": op_add_take,
+    "select_take": op_select_take,
+    "get_takes": op_get_takes,
+    "finalize_take": op_finalize_take,
+    "delete_take": op_delete_take,
+    
+    # Project Settings
+    "save_project": op_save_project,
+    "export_project": op_export_project,
+    "get_project_setting": op_get_project_setting,
+    "set_project_setting": op_set_project_setting,
+    "get_timeline_setting": op_get_timeline_setting,
+    "set_timeline_setting": op_set_timeline_setting,
+    
+    # Keyframe Mode
+    "set_keyframe_mode": op_set_keyframe_mode,
+    "get_keyframe_mode": op_get_keyframe_mode,
+    
+    # Cache
+    "set_clip_cache_mode": op_set_clip_cache_mode,
+    "get_clip_cache_mode": op_get_clip_cache_mode,
+    "refresh_lut_list": op_refresh_lut_list,
 }
 
 

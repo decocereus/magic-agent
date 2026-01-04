@@ -1,5 +1,8 @@
 use thiserror::Error;
 
+/// Re-export for library use
+pub use MagicError as MagicAgentError;
+
 #[derive(Error, Debug)]
 #[allow(dead_code)]
 pub enum MagicError {

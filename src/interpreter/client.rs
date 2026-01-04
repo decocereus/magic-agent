@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::resolve::context::ResolveContext;
 
 /// LLM client for plan generation
+#[derive(Clone)]
 pub struct LlmClient {
     api_key: String,
     model: String,

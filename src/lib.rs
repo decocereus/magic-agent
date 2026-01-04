@@ -7,7 +7,7 @@ pub mod resolve;
 use anyhow::Result;
 
 pub use config::Config;
-pub use error::MagicAgentError;
+pub use error::MagicError as MagicAgentError;
 pub use interpreter::LlmClient;
 pub use interpreter::schema::Plan;
 pub use resolve::ResolveBridge;
@@ -63,7 +63,7 @@ impl MagicAgent {
 
         if plan.is_error() {
             let error = plan.error.unwrap_or_else(|| "Unknown error".to_string());
-            let suggestion = plan.suggestion.unwrap_or_else(|| "".to_string());
+            let suggestion = plan.suggestion.unwrap_or_default();
             return Err(anyhow::anyhow!("{} Suggestion: {}", error, suggestion));
         }
 

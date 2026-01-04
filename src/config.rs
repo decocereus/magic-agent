@@ -41,7 +41,7 @@ impl LlmConfig {
     pub fn model(&self) -> &str {
         self.model
             .as_deref()
-            .unwrap_or_else(|| match self.provider.as_str() {
+            .unwrap_or(match self.provider.as_str() {
                 "anthropic" => "claude-sonnet-4-20250514",
                 "openai" => "gpt-4o",
                 "openrouter" => "anthropic/claude-sonnet-4-20250514",
@@ -54,7 +54,7 @@ impl LlmConfig {
     pub fn base_url(&self) -> &str {
         self.base_url
             .as_deref()
-            .unwrap_or_else(|| match self.provider.as_str() {
+            .unwrap_or(match self.provider.as_str() {
                 "anthropic" => "https://api.anthropic.com/v1",
                 "openai" => "https://api.openai.com/v1",
                 "openrouter" => "https://openrouter.ai/api/v1",

@@ -1,6 +1,7 @@
 # Build artifacts
 /target/
-Cargo.lock
+debug/
+release/
 
 # Python
 __pycache__/
@@ -9,6 +10,11 @@ __pycache__/
 *.pyd
 .Python
 *.so
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
 
 # IDE
 .idea/
@@ -16,13 +22,27 @@ __pycache__/
 *.swp
 *.swo
 *~
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Config with secrets
 config.toml
+.env
+.env.*
 
 # Logs
 *.log
+logs/
 
 # Test artifacts
 *.plan.json
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+coverage/

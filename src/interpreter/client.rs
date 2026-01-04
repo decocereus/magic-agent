@@ -134,20 +134,17 @@ impl LlmClient {
     /// Extract JSON from a response that might be wrapped in markdown code blocks
     fn extract_json(text: &str) -> String {
         let trimmed = text.trim();
-        
+
         // Check for ```json ... ``` or ``` ... ```
-        if trimmed.starts_with("```") {
-            let without_start = if trimmed.starts_with("```json") {
-                &trimmed[7..]
-            } else {
-                &trimmed[3..]
-            };
-            
+        if let Some(without_start) = trimmed
+            .strip_prefix("```json")
+            .or_else(|| trimmed.strip_prefix("```"))
+        {
             if let Some(end_pos) = without_start.rfind("```") {
                 return without_start[..end_pos].trim().to_string();
             }
         }
-        
+
         trimmed.to_string()
     }
 

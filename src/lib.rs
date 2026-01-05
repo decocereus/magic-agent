@@ -8,10 +8,10 @@ use anyhow::Result;
 
 pub use config::Config;
 pub use error::MagicError as MagicAgentError;
-pub use interpreter::LlmClient;
 pub use interpreter::schema::Plan;
+pub use interpreter::LlmClient;
+pub use resolve::context::{ConnectionInfo, ResolveContext};
 pub use resolve::ResolveBridge;
-pub use resolve::context::{ResolveContext, ConnectionInfo};
 
 /// Main Magic Agent library
 /// Provides interface to DaVinci Resolve operations via natural language
@@ -53,13 +53,25 @@ impl MagicAgent {
         tracing::info!("Executing request: {}", request);
 
         let context = self.bridge.get_context().await?;
-        tracing::debug!("Got context: {} timelines", context.project.as_ref().map(|p| p.timeline_count).unwrap_or(0));
+        tracing::debug!(
+            "Got context: {} timelines",
+            context
+                .project
+                .as_ref()
+                .map(|p| p.timeline_count)
+                .unwrap_or(0)
+        );
 
         if self.llm_client.is_none() {
             self.llm_client = Some(LlmClient::new(&self.config)?);
         }
 
-        let plan: Plan = self.llm_client.as_ref().unwrap().generate_plan(&context, request).await?;
+        let plan: Plan = self
+            .llm_client
+            .as_ref()
+            .unwrap()
+            .generate_plan(&context, request)
+            .await?;
 
         if plan.is_error() {
             let error = plan.error.unwrap_or_else(|| "Unknown error".to_string());
@@ -69,7 +81,11 @@ impl MagicAgent {
 
         let mut results = vec![];
         for op in &plan.operations {
-            match self.bridge.execute_operation(&op.op, op.params.clone()).await {
+            match self
+                .bridge
+                .execute_operation(&op.op, op.params.clone())
+                .await
+            {
                 Ok(result) => {
                     results.push(serde_json::json!({
                         "op": op.op,

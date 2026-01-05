@@ -77,7 +77,9 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
+        )
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .init();
 
@@ -113,8 +115,15 @@ async fn main() -> anyhow::Result<()> {
             yes,
             dry_run,
         } => {
-            cli::commands::apply(&config, request.as_deref(), plan.as_deref(), yes, dry_run, cli.pretty)
-                .await
+            cli::commands::apply(
+                &config,
+                request.as_deref(),
+                plan.as_deref(),
+                yes,
+                dry_run,
+                cli.pretty,
+            )
+            .await
         }
     }
 }

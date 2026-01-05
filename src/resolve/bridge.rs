@@ -36,11 +36,11 @@ impl ResolveBridge {
     /// Create a new bridge instance
     pub fn new(config: &Config) -> Self {
         let python_path = config.python_path();
-        
+
         // Get the path to the bundled Python script
         // Try multiple locations: next to executable, CARGO_MANIFEST_DIR, or cwd
         let script_path = Self::find_script_path();
-        
+
         Self {
             python_path,
             script_path,
@@ -49,7 +49,7 @@ impl ResolveBridge {
 
     fn find_script_path() -> String {
         let script_name = "python/resolve_bridge.py";
-        
+
         // 1. Check next to executable (for installed binaries)
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
@@ -59,7 +59,7 @@ impl ResolveBridge {
                 }
             }
         }
-        
+
         // 2. Check CARGO_MANIFEST_DIR (for development with cargo run)
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
             let path = std::path::Path::new(&manifest_dir).join(script_name);
@@ -67,13 +67,13 @@ impl ResolveBridge {
                 return path.to_string_lossy().to_string();
             }
         }
-        
+
         // 3. Check current working directory
         let cwd_path = std::path::Path::new(script_name);
         if cwd_path.exists() {
             return cwd_path.to_string_lossy().to_string();
         }
-        
+
         // 4. Fallback - return a path that will be reported as not found
         script_name.to_string()
     }
@@ -84,12 +84,12 @@ impl ResolveBridge {
             op: op.to_string(),
             params,
         };
-        
+
         let input = serde_json::to_string(&command)?;
-        
+
         tracing::debug!("Executing bridge command: {}", op);
         tracing::trace!("Command input: {}", input);
-        
+
         let mut child = Command::new(&self.python_path)
             .arg(&self.script_path)
             .stdin(Stdio::piped())
@@ -97,33 +97,35 @@ impl ResolveBridge {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("Failed to spawn Python at {}", self.python_path))?;
-        
+
         // Write command to stdin
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(input.as_bytes()).await?;
             stdin.shutdown().await?;
         }
-        
+
         // Wait for completion and read output
         let output = child.wait_with_output().await?;
-        
+
         // Log stderr if any
         if !output.stderr.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!("Python stderr: {}", stderr);
         }
-        
+
         // Parse response
         let stdout = String::from_utf8_lossy(&output.stdout);
         tracing::trace!("Bridge response: {}", stdout);
-        
+
         let response: BridgeResponse = serde_json::from_str(&stdout)
             .with_context(|| format!("Failed to parse bridge response: {}", stdout))?;
-        
+
         if response.success {
             Ok(response.result)
         } else {
-            let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = response
+                .error
+                .unwrap_or_else(|| "Unknown error".to_string());
             let code = response.code.unwrap_or_else(|| "PYTHON_ERROR".to_string());
             Err(anyhow::anyhow!("[{}] {}", code, error_msg))
         }
@@ -155,10 +157,10 @@ impl ResolveBridge {
             .output()
             .await
             .with_context(|| format!("Python not found at {}", self.python_path))?;
-        
+
         let version = String::from_utf8_lossy(&output.stdout);
         let version = version.trim();
-        
+
         // Sometimes --version goes to stderr
         if version.is_empty() {
             let version = String::from_utf8_lossy(&output.stderr);

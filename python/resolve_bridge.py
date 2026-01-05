@@ -233,8 +233,8 @@ def op_import_media(resolve, params):
 
 
 def op_append_to_timeline(resolve, params):
-    """Append clips to timeline."""
-    clip_names = params.get("clips", [])
+    """Append clips to timeline with optional in/out points."""
+    clips_param = params.get("clips", [])
     track = params.get("track", 1)
     
     project = resolve.GetProjectManager().GetCurrentProject()
@@ -248,12 +248,48 @@ def op_append_to_timeline(resolve, params):
     media_pool = project.GetMediaPool()
     root = media_pool.GetRootFolder()
     
+    # Support both simple list of names and detailed clip info
     clips_to_append = []
-    for name in clip_names:
+    
+    for clip_param in clips_param:
+        # Handle both string names and dict with in/out points
+        if isinstance(clip_param, str):
+            # Simple case: just clip name
+            clip_name = clip_param
+            in_point = None
+            out_point = None
+        else:
+            # Advanced case: dict with name and optional in/out points
+            clip_name = clip_param.get("name")
+            in_point = clip_param.get("in_point")  # Frame number
+            out_point = clip_param.get("out_point")  # Frame number
+        
+        # Find the media pool clip
+        media_pool_clip = None
         for clip in root.GetClipList() or []:
-            if clip.GetName() == name:
-                clips_to_append.append(clip)
+            if clip.GetName() == clip_name:
+                media_pool_clip = clip
                 break
+        
+        if not media_pool_clip:
+            continue
+        
+        # Build clip info dict
+        if in_point is not None or out_point is not None:
+            # Use advanced format with in/out points
+            clip_info = {
+                "mediaPoolItem": media_pool_clip,
+                "trackIndex": track
+            }
+            if in_point is not None:
+                clip_info["startFrame"] = in_point
+            if out_point is not None:
+                clip_info["endFrame"] = out_point
+            
+            clips_to_append.append(clip_info)
+        else:
+            # Simple format - just the clip object
+            clips_to_append.append(media_pool_clip)
     
     if clips_to_append:
         result = media_pool.AppendToTimeline(clips_to_append)
@@ -760,23 +796,418 @@ def op_insert_title(resolve, params):
     """Insert a title into timeline."""
     title_name = params.get("name", "")
     title_type = params.get("type", "standard")  # standard, fusion
-    
+
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
         return error("No project is open", "NO_PROJECT")
-    
+
     timeline = project.GetCurrentTimeline()
     if not timeline:
         return error("No timeline is active", "NO_TIMELINE")
-    
+
     if title_type == "fusion":
         result = timeline.InsertFusionTitleIntoTimeline(title_name)
     else:
         result = timeline.InsertTitleIntoTimeline(title_name)
-    
+
     if result:
         return success({"timeline_item": result.GetName() if result else title_name})
     return error(f"Failed to insert title: {title_name}")
+
+
+# =============================================================================
+# Text+ Operations
+# =============================================================================
+
+def op_add_text_to_timeline(resolve, params):
+    """Add a Text+ title with custom content at playhead."""
+    text = params.get("text", "")
+    duration = params.get("duration", 150)  # Default 5 seconds at 30fps
+    style = params.get("style", {})
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    # Insert Text+ generator
+    result = timeline.InsertFusionGeneratorIntoTimeline("Text+")
+    if not result:
+        return error("Failed to insert Text+ generator")
+
+    try:
+        # Get the Fusion composition
+        comp = result.GetFusionCompByIndex(1)
+        if not comp:
+            return error("Could not get Fusion composition")
+
+        # Find the Text+ tool in the composition
+        text_tool = None
+        for tool in comp.GetToolList().values():
+            if tool.GetAttrs()["TOOL_Name"] == "Text+":
+                text_tool = tool
+                break
+
+        if not text_tool:
+            return error("Could not find Text+ tool in composition")
+
+        # Set text content
+        text_tool.SetInput("StyledText", text)
+
+        # Apply styling if provided
+        if style:
+            # Font
+            if "font" in style:
+                text_tool.SetInput("Font", style["font"])
+
+            # Size
+            if "size" in style:
+                text_tool.SetInput("Size", style["size"])
+
+            # Color
+            if "color" in style:
+                c = style["color"]
+                alpha = c.get("a", 1.0)
+                text_tool.SetInput("Red1", c["r"])
+                text_tool.SetInput("Green1", c["g"])
+                text_tool.SetInput("Blue1", c["b"])
+                text_tool.SetInput("Alpha1", alpha)
+
+            # Bold/Italic
+            if "bold" in style:
+                text_tool.SetInput("Bold", style["bold"])
+            if "italic" in style:
+                text_tool.SetInput("Italic", style["italic"])
+
+            # Tracking (letter spacing)
+            if "tracking" in style:
+                text_tool.SetInput("Tracking", style["tracking"])
+
+            # Line spacing
+            if "line_spacing" in style:
+                text_tool.SetInput("LineSpacing", style["line_spacing"])
+
+            # Horizontal anchor
+            if "h_anchor" in style:
+                h_anchor_map = {"left": 0, "center": 1, "right": 2}
+                text_tool.SetInput("Center", h_anchor_map.get(style["h_anchor"], 1))
+
+            # Vertical anchor
+            if "v_anchor" in style:
+                v_anchor_map = {"top": 0, "center": 1, "bottom": 2}
+                text_tool.SetInput("VerticalAlignment", v_anchor_map.get(style["v_anchor"], 1))
+
+            # Position
+            if "position" in style:
+                pos = style["position"]
+                text_tool.SetInput("Center", {
+                    1: pos["x"],
+                    2: pos["y"],
+                    3: 0
+                })
+
+            # Shading (outline/shadow)
+            shading = style.get("shading", {})
+            if shading:
+                if "enabled" in shading:
+                    text_tool.SetInput("ShadingEnabled", shading["enabled"])
+
+                if "color" in shading:
+                    sc = shading["color"]
+                    sa = sc.get("a", 1.0)
+                    text_tool.SetInput("Red2", sc["r"])
+                    text_tool.SetInput("Green2", sc["g"])
+                    text_tool.SetInput("Blue2", sc["b"])
+                    text_tool.SetInput("Alpha2", sa)
+
+                if "outline" in shading:
+                    text_tool.SetInput("Outline", shading["outline"])
+
+                if "shadow_offset" in shading:
+                    shadow = shading["shadow_offset"]
+                    text_tool.SetInput("ShadowOffset", {
+                        1: shadow["x"],
+                        2: shadow["y"],
+                        3: 0
+                    })
+
+        # Set clip duration
+        result.SetClipLength(duration)
+
+        return success({
+            "timeline_item": result.GetName() if result else "Text+",
+            "text": text,
+            "duration": duration
+        })
+
+    except Exception as e:
+        return error(f"Failed to configure Text+: {e}")
+
+
+def op_set_text_content(resolve, params):
+    """Set text content on an existing Text+ clip."""
+    selector = params.get("selector", {})
+    text = params.get("text", "")
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+
+    clip = items[index]
+
+    try:
+        # Get the Fusion composition
+        comp = clip.GetFusionCompByIndex(1)
+        if not comp:
+            return error("Clip does not have a Fusion composition")
+
+        # Find the Text+ tool
+        text_tool = None
+        for tool in comp.GetToolList().values():
+            if tool.GetAttrs()["TOOL_Name"] == "Text+":
+                text_tool = tool
+                break
+
+        if not text_tool:
+            return error("Clip does not contain a Text+ tool")
+
+        # Set text content
+        text_tool.SetInput("StyledText", text)
+
+        return success({"text_set": text})
+
+    except Exception as e:
+        return error(f"Failed to set text content: {e}")
+
+
+def op_set_text_style(resolve, params):
+    """Modify styling of an existing Text+ clip."""
+    selector = params.get("selector", {})
+    style = params.get("style", {})
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+
+    clip = items[index]
+
+    try:
+        # Get the Fusion composition
+        comp = clip.GetFusionCompByIndex(1)
+        if not comp:
+            return error("Clip does not have a Fusion composition")
+
+        # Find the Text+ tool
+        text_tool = None
+        for tool in comp.GetToolList().values():
+            if tool.GetAttrs()["TOOL_Name"] == "Text+":
+                text_tool = tool
+                break
+
+        if not text_tool:
+            return error("Clip does not contain a Text+ tool")
+
+        # Apply styling
+        modified = []
+
+        # Font
+        if "font" in style:
+            text_tool.SetInput("Font", style["font"])
+            modified.append("font")
+
+        # Size
+        if "size" in style:
+            text_tool.SetInput("Size", style["size"])
+            modified.append("size")
+
+        # Color
+        if "color" in style:
+            c = style["color"]
+            alpha = c.get("a", 1.0)
+            text_tool.SetInput("Red1", c["r"])
+            text_tool.SetInput("Green1", c["g"])
+            text_tool.SetInput("Blue1", c["b"])
+            text_tool.SetInput("Alpha1", alpha)
+            modified.append("color")
+
+        # Bold/Italic
+        if "bold" in style:
+            text_tool.SetInput("Bold", style["bold"])
+            modified.append("bold")
+        if "italic" in style:
+            text_tool.SetInput("Italic", style["italic"])
+            modified.append("italic")
+
+        # Tracking
+        if "tracking" in style:
+            text_tool.SetInput("Tracking", style["tracking"])
+            modified.append("tracking")
+
+        # Line spacing
+        if "line_spacing" in style:
+            text_tool.SetInput("LineSpacing", style["line_spacing"])
+            modified.append("line_spacing")
+
+        # Horizontal anchor
+        if "h_anchor" in style:
+            h_anchor_map = {"left": 0, "center": 1, "right": 2}
+            text_tool.SetInput("Center", h_anchor_map.get(style["h_anchor"], 1))
+            modified.append("h_anchor")
+
+        # Vertical anchor
+        if "v_anchor" in style:
+            v_anchor_map = {"top": 0, "center": 1, "bottom": 2}
+            text_tool.SetInput("VerticalAlignment", v_anchor_map.get(style["v_anchor"], 1))
+            modified.append("v_anchor")
+
+        # Position
+        if "position" in style:
+            pos = style["position"]
+            text_tool.SetInput("Center", {
+                1: pos["x"],
+                2: pos["y"],
+                3: 0
+            })
+            modified.append("position")
+
+        # Shading
+        shading = style.get("shading", {})
+        if shading:
+            if "enabled" in shading:
+                text_tool.SetInput("ShadingEnabled", shading["enabled"])
+                modified.append("shading_enabled")
+
+            if "color" in shading:
+                sc = shading["color"]
+                sa = sc.get("a", 1.0)
+                text_tool.SetInput("Red2", sc["r"])
+                text_tool.SetInput("Green2", sc["g"])
+                text_tool.SetInput("Blue2", sc["b"])
+                text_tool.SetInput("Alpha2", sa)
+                modified.append("shading_color")
+
+            if "outline" in shading:
+                text_tool.SetInput("Outline", shading["outline"])
+                modified.append("outline")
+
+            if "shadow_offset" in shading:
+                shadow = shading["shadow_offset"]
+                text_tool.SetInput("ShadowOffset", {
+                    1: shadow["x"],
+                    2: shadow["y"],
+                    3: 0
+                })
+                modified.append("shadow_offset")
+
+        return success({"modified": modified})
+
+    except Exception as e:
+        return error(f"Failed to set text style: {e}")
+
+
+def op_get_text_properties(resolve, params):
+    """Get current text properties from a Text+ clip."""
+    selector = params.get("selector", {})
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    track = selector.get("track", 1)
+    index = selector.get("index", 0)
+
+    items = timeline.GetItemListInTrack("video", track)
+    if not items or index >= len(items):
+        return error("Clip not found")
+
+    clip = items[index]
+
+    try:
+        # Get the Fusion composition
+        comp = clip.GetFusionCompByIndex(1)
+        if not comp:
+            return error("Clip does not have a Fusion composition")
+
+        # Find the Text+ tool
+        text_tool = None
+        for tool in comp.GetToolList().values():
+            if tool.GetAttrs()["TOOL_Name"] == "Text+":
+                text_tool = tool
+                break
+
+        if not text_tool:
+            return error("Clip does not contain a Text+ tool")
+
+        # Get properties
+        properties = {
+            "text": text_tool.GetInput("StyledText"),
+            "font": text_tool.GetInput("Font"),
+            "size": text_tool.GetInput("Size"),
+            "color": {
+                "r": text_tool.GetInput("Red1"),
+                "g": text_tool.GetInput("Green1"),
+                "b": text_tool.GetInput("Blue1"),
+                "a": text_tool.GetInput("Alpha1")
+            },
+            "bold": text_tool.GetInput("Bold"),
+            "italic": text_tool.GetInput("Italic"),
+            "tracking": text_tool.GetInput("Tracking"),
+            "line_spacing": text_tool.GetInput("LineSpacing"),
+            "h_anchor": text_tool.GetInput("Center"),
+            "v_anchor": text_tool.GetInput("VerticalAlignment"),
+            "position": {
+                "x": text_tool.GetInput("Center", 1),
+                "y": text_tool.GetInput("Center", 2)
+            },
+            "shading": {
+                "enabled": text_tool.GetInput("ShadingEnabled"),
+                "color": {
+                    "r": text_tool.GetInput("Red2"),
+                    "g": text_tool.GetInput("Green2"),
+                    "b": text_tool.GetInput("Blue2"),
+                    "a": text_tool.GetInput("Alpha2")
+                },
+                "outline": text_tool.GetInput("Outline"),
+                "shadow_offset": {
+                    "x": text_tool.GetInput("ShadowOffset", 1),
+                    "y": text_tool.GetInput("ShadowOffset", 2)
+                }
+            }
+        }
+
+        return success({"properties": properties})
+
+    except Exception as e:
+        return error(f"Failed to get text properties: {e}")
 
 
 # =============================================================================
@@ -2604,6 +3035,12 @@ OPERATIONS = {
     # Generators & Titles
     "insert_generator": op_insert_generator,
     "insert_title": op_insert_title,
+
+    # Text+ Operations
+    "add_text_to_timeline": op_add_text_to_timeline,
+    "set_text_content": op_set_text_content,
+    "set_text_style": op_set_text_style,
+    "get_text_properties": op_get_text_properties,
     
     # AI/Processing
     "stabilize_clip": op_stabilize_clip,

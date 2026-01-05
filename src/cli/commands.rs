@@ -45,9 +45,9 @@ const PROVIDERS: &[ProviderInfo] = &[
 /// Doctor command - check system status
 pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     let bridge = ResolveBridge::new(config);
-    
+
     let mut checks = vec![];
-    
+
     // Check Python
     let python_status = match bridge.check_python().await {
         Ok(version) => {
@@ -68,7 +68,7 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
         }
     };
     checks.push(python_status);
-    
+
     // Check bridge script
     let script_status = if bridge.script_exists() {
         json!({
@@ -86,7 +86,7 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
         })
     };
     checks.push(script_status);
-    
+
     // Check Resolve connection
     let resolve_status = match bridge.check_connection().await {
         Ok(info) => {
@@ -106,7 +106,7 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
         }
     };
     checks.push(resolve_status);
-    
+
     // Check API key
     let api_status = match config.api_key() {
         Ok(_) => {
@@ -125,10 +125,10 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
         }
     };
     checks.push(api_status);
-    
+
     // Output
     let result = json!({ "checks": checks });
-    
+
     if pretty {
         println!("Magic Agent Doctor\n");
         for check in checks {
@@ -152,27 +152,27 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     } else {
         println!("{}", serde_json::to_string(&result)?);
     }
-    
+
     Ok(())
 }
 
 /// Status command - show current project/timeline
 pub async fn status(config: &Config, pretty: bool) -> Result<()> {
     let bridge = ResolveBridge::new(config);
-    
+
     let context = bridge.get_context().await?;
-    
+
     if pretty {
         println!("Resolve Status\n");
         println!("Product: {} {}", context.product, context.version);
-        
+
         if let Some(project) = &context.project {
             println!("\nProject: {}", project.name);
             println!("Timelines: {}", project.timeline_count);
         } else {
             println!("\nNo project open");
         }
-        
+
         if let Some(timeline) = &context.timeline {
             println!("\nActive Timeline: {}", timeline.name);
             println!(
@@ -185,7 +185,7 @@ pub async fn status(config: &Config, pretty: bool) -> Result<()> {
                 timeline.start_frame,
                 timeline.end_frame
             );
-            
+
             println!("\nVideo Tracks:");
             for track in &timeline.tracks.video {
                 println!(
@@ -195,7 +195,7 @@ pub async fn status(config: &Config, pretty: bool) -> Result<()> {
                     track.clips.len()
                 );
             }
-            
+
             println!("\nAudio Tracks:");
             for track in &timeline.tracks.audio {
                 println!(
@@ -205,42 +205,48 @@ pub async fn status(config: &Config, pretty: bool) -> Result<()> {
                     track.clips.len()
                 );
             }
-            
+
             if !timeline.markers.is_empty() {
                 println!("\nMarkers: {}", timeline.markers.len());
             }
         }
-        
+
         if let Some(pool) = &context.media_pool {
-            println!("\nMedia Pool: {} clips, {} folders", pool.clips.len(), pool.folders.len());
+            println!(
+                "\nMedia Pool: {} clips, {} folders",
+                pool.clips.len(),
+                pool.folders.len()
+            );
         }
     } else {
         println!("{}", serde_json::to_string(&context)?);
     }
-    
+
     Ok(())
 }
 
 /// Plan command - generate execution plan from natural language
 pub async fn plan(config: &Config, request: &str, pretty: bool) -> Result<()> {
     let bridge = ResolveBridge::new(config);
-    
+
     // Get current Resolve context
-    let context = bridge.get_context().await
+    let context = bridge
+        .get_context()
+        .await
         .context("Failed to get Resolve context. Is Resolve running?")?;
-    
+
     // Create LLM client
     let client = LlmClient::new(config)?;
-    
+
     // Generate plan
     let plan = client.generate_plan(&context, request).await?;
-    
+
     if pretty {
         print_plan_pretty(&plan);
     } else {
         println!("{}", serde_json::to_string(&plan)?);
     }
-    
+
     Ok(())
 }
 
@@ -252,9 +258,9 @@ fn print_plan_pretty(plan: &Plan) {
         }
         return;
     }
-    
+
     println!("Execution Plan (v{})\n", plan.version);
-    
+
     if let Some(target) = &plan.target {
         if let Some(project) = &target.project {
             println!("Target Project: {}", project);
@@ -264,7 +270,7 @@ fn print_plan_pretty(plan: &Plan) {
         }
         println!();
     }
-    
+
     if !plan.preconditions.is_empty() {
         println!("Preconditions:");
         for pre in &plan.preconditions {
@@ -272,13 +278,13 @@ fn print_plan_pretty(plan: &Plan) {
         }
         println!();
     }
-    
+
     println!("Operations:");
     for (i, op) in plan.operations.iter().enumerate() {
         println!("  {}. {}", i + 1, op.op);
         if !op.params.is_null() {
-            let params_str = serde_json::to_string_pretty(&op.params)
-                .unwrap_or_else(|_| "{}".to_string());
+            let params_str =
+                serde_json::to_string_pretty(&op.params).unwrap_or_else(|_| "{}".to_string());
             for line in params_str.lines() {
                 println!("      {}", line);
             }
@@ -301,32 +307,36 @@ pub async fn apply(
             println!("Error: --yes flag required to execute changes");
             println!("Use --dry-run to validate without executing");
         } else {
-            println!("{}", json!({
-                "error": "--yes flag required to execute changes"
-            }));
+            println!(
+                "{}",
+                json!({
+                    "error": "--yes flag required to execute changes"
+                })
+            );
         }
         return Ok(());
     }
-    
+
     let bridge = ResolveBridge::new(config);
-    
+
     // Get the plan - either from file or generate from request
     let plan: Plan = if let Some(path) = plan_path {
         // Load plan from file
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read plan file: {:?}", path))?;
-        serde_json::from_str(&contents)
-            .with_context(|| "Failed to parse plan file")?
+        serde_json::from_str(&contents).with_context(|| "Failed to parse plan file")?
     } else if let Some(req) = request {
         // Generate plan from request
-        let context = bridge.get_context().await
+        let context = bridge
+            .get_context()
+            .await
             .context("Failed to get Resolve context")?;
         let client = LlmClient::new(config)?;
         client.generate_plan(&context, req).await?
     } else {
         anyhow::bail!("Either a request or --plan file must be provided");
     };
-    
+
     // Check for error plan
     if plan.is_error() {
         if pretty {
@@ -340,34 +350,38 @@ pub async fn apply(
         }
         return Ok(());
     }
-    
+
     // Validate plan
-    plan.validate().map_err(|e| anyhow::anyhow!("Invalid plan: {}", e))?;
-    
+    plan.validate()
+        .map_err(|e| anyhow::anyhow!("Invalid plan: {}", e))?;
+
     if dry_run {
         if pretty {
             println!("Dry run - plan is valid:\n");
             print_plan_pretty(&plan);
         } else {
-            println!("{}", json!({
-                "valid": true,
-                "plan": plan
-            }));
+            println!(
+                "{}",
+                json!({
+                    "valid": true,
+                    "plan": plan
+                })
+            );
         }
         return Ok(());
     }
-    
+
     // Execute operations
     if pretty {
         println!("Executing {} operations...\n", plan.operations.len());
     }
-    
+
     let mut results = vec![];
     for (i, op) in plan.operations.iter().enumerate() {
         if pretty {
             print!("  {}. {}... ", i + 1, op.op);
         }
-        
+
         match bridge.execute_operation(&op.op, op.params.clone()).await {
             Ok(result) => {
                 if pretty {
@@ -391,17 +405,24 @@ pub async fn apply(
             }
         }
     }
-    
+
     if pretty {
         let success_count = results.iter().filter(|r| r["status"] == "success").count();
-        println!("\nCompleted: {}/{} operations succeeded", success_count, results.len());
+        println!(
+            "\nCompleted: {}/{} operations succeeded",
+            success_count,
+            results.len()
+        );
     } else {
-        println!("{}", json!({
-            "executed": true,
-            "results": results
-        }));
+        println!(
+            "{}",
+            json!({
+                "executed": true,
+                "results": results
+            })
+        );
     }
-    
+
     Ok(())
 }
 
@@ -454,10 +475,7 @@ pub fn select_provider(config: &mut Config) -> Result<()> {
 
     // Check API key requirement
     if !config.llm.requires_api_key() {
-        println!(
-            "\n\u{2714} {} doesn't require an API key.",
-            selected.label
-        );
+        println!("\n\u{2714} {} doesn't require an API key.", selected.label);
     } else if config.llm.api_key.is_none() {
         let env_var = match selected.id {
             "anthropic" => "ANTHROPIC_API_KEY",
@@ -551,7 +569,9 @@ pub async fn list_models(config: &Config, pretty: bool) -> Result<()> {
                 if config.llm.base_url().contains("localhost") {
                     eprintln!("\n\u{1F4A1} Troubleshooting:");
                     eprintln!("  - Make sure LM Studio is running");
-                    eprintln!("  - Start the server: LM Studio \u{2192} Server \u{2192} Start Server");
+                    eprintln!(
+                        "  - Start the server: LM Studio \u{2192} Server \u{2192} Start Server"
+                    );
                     eprintln!("  - Check URL matches: {}", config.llm.base_url());
                 } else {
                     eprintln!("\n\u{1F4A1} Troubleshooting:");

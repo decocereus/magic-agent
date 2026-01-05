@@ -9,8 +9,26 @@ pub const SYSTEM_PROMPT: &str = r#"You are an assistant that converts natural la
 - `import_media`: Import files into media pool
   params: { paths: string[] }
 
-- `append_to_timeline`: Add clips to end of timeline  
-  params: { clips: string[], track?: number }
+- `append_to_timeline`: Add clips to end of timeline with optional in/out points
+  params: { 
+    clips: (string | ClipInfo)[],  // Simple names or detailed clip info
+    track?: number 
+  }
+  
+  ClipInfo format:
+    {
+      name: string,              // Clip name in media pool
+      in_point?: number,         // Start frame (optional)
+      out_point?: number         // End frame (optional)
+    }
+  
+  Examples:
+    - Simple: { clips: ["clip1.mp4", "clip2.mp4"] }
+    - With in/out: { clips: [
+        { name: "clip1.mp4", in_point: 100, out_point: 500 },
+        { name: "clip2.mp4" }  // Use full clip
+      ]
+    }
 
 - `create_timeline`: Create new timeline
   params: { name: string, clips?: string[] }
@@ -87,6 +105,63 @@ pub const SYSTEM_PROMPT: &str = r#"You are an assistant that converts natural la
   
 - `insert_title`: Insert a title
   params: { name: string, type?: "standard" | "fusion" }
+
+### Text+ Operations (Fusion Titles)
+- `add_text_to_timeline`: Add a Text+ title with custom content at playhead
+  params: { 
+    text: string,                    // The text content to display
+    duration?: number,               // Duration in frames (default: 150 = 5s at 30fps)
+    style?: {
+      font?: string,                 // Font family (e.g., "Arial", "Helvetica", "Open Sans")
+      size?: number,                 // Font size (default: 0.1, range 0.0-1.0 relative to frame)
+      color?: { r: number, g: number, b: number, a?: number }, // RGBA 0-1 (default: white)
+      bold?: boolean,
+      italic?: boolean,
+      tracking?: number,             // Letter spacing (-0.5 to 1.0)
+      line_spacing?: number,         // Line spacing (0.5 to 3.0)
+      h_anchor?: "left" | "center" | "right",
+      v_anchor?: "top" | "center" | "bottom",
+      position?: { x: number, y: number },  // Position offset (-1 to 1)
+      shading?: {                    // Text outline/shadow
+        enabled?: boolean,
+        color?: { r: number, g: number, b: number, a?: number },
+        outline?: number,            // Outline thickness
+        shadow_offset?: { x: number, y: number }
+      }
+    }
+  }
+
+- `set_text_content`: Set text content on an existing Text+ clip
+  params: { 
+    selector: ClipSelector,          // Which clip to modify
+    text: string                     // New text content
+  }
+
+- `set_text_style`: Modify styling of an existing Text+ clip
+  params: { 
+    selector: ClipSelector,
+    style: {
+      font?: string,                 // Font family
+      size?: number,                 // Font size (0.0-1.0)
+      color?: { r: number, g: number, b: number, a?: number },
+      bold?: boolean,
+      italic?: boolean,
+      tracking?: number,             // Letter spacing
+      line_spacing?: number,
+      h_anchor?: "left" | "center" | "right",
+      v_anchor?: "top" | "center" | "bottom",
+      position?: { x: number, y: number },
+      shading?: {
+        enabled?: boolean,
+        color?: { r: number, g: number, b: number, a?: number },
+        outline?: number,
+        shadow_offset?: { x: number, y: number }
+      }
+    }
+  }
+
+- `get_text_properties`: Get current text properties from a Text+ clip
+  params: { selector: ClipSelector }
 
 ### AI/Processing Operations
 - `stabilize_clip`: Apply stabilization

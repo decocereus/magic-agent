@@ -103,11 +103,7 @@ impl LlmClient {
     }
 
     /// Generate an execution plan from a natural language request
-    pub async fn generate_plan(
-        &self,
-        context: &ResolveContext,
-        request: &str,
-    ) -> Result<Plan> {
+    pub async fn generate_plan(&self, context: &ResolveContext, request: &str) -> Result<Plan> {
         let full_prompt = prompt::build_prompt(context, request);
 
         let response_text = match self.provider.as_str() {

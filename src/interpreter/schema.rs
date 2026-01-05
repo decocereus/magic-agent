@@ -121,6 +121,11 @@ impl Plan {
                 // Generators & Titles
                 | "insert_generator"
                 | "insert_title"
+                // Text+ Operations
+                | "set_text_content"
+                | "set_text_style"
+                | "get_text_properties"
+                | "add_text_to_timeline"
                 // AI/Processing
                 | "stabilize_clip"
                 | "smart_reframe"

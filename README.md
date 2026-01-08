@@ -1,10 +1,6 @@
 # Magic Agent
 
-Natural-language editing CLI for DaVinci Resolve. Convert plain English commands into Resolve operations.
-
-```
-"set opacity to 50% on all clips in track 1"  →  Executes in Resolve
-```
+Direct CLI for DaVinci Resolve scripting operations. Invoke Resolve tools from the terminal or automations.
 
 ## Requirements
 
@@ -12,7 +8,6 @@ Natural-language editing CLI for DaVinci Resolve. Convert plain English commands
 - DaVinci Resolve Studio 20.0+ (scripting requires Studio version)
 - Python 3.9+
 - Rust 1.70+ (for building)
-- Anthropic API key (or OpenAI/OpenRouter)
 
 ## Installation
 
@@ -39,32 +34,21 @@ The binary will be at `target/release/magic-agent`.
 cargo install --git https://github.com/decocereus/magic-agent.git
 ```
 
+### Install to Path
+```bash
+cargo install --path .
+```
+
 ## Configuration
 
 Create `~/.config/magic-agent/config.toml`:
 
 ```toml
-[llm]
-provider = "anthropic"  # anthropic | openai | openrouter
-# api_key = "sk-ant-..."  # Or use environment variable
-
 [resolve]
 # python_path = "/opt/homebrew/bin/python3"  # Auto-detected if not set
 
 [output]
 default_format = "json"  # json | pretty
-```
-
-### Environment Variables
-
-API keys can be set via environment variables:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-# or
-export OPENAI_API_KEY="sk-..."
-# or
-export OPENROUTER_API_KEY="sk-or-..."
 ```
 
 ## Usage
@@ -83,7 +67,6 @@ Magic Agent Doctor
     Path: /opt/homebrew/bin/python3
 ✔ bridge_script: Found
 ✔ resolve: DaVinci Resolve Studio 20.0.0.49
-✔ api_key: Configured for anthropic
 ```
 
 ### View current state
@@ -114,43 +97,52 @@ Audio Tracks:
 Media Pool: 5 clips, 2 folders
 ```
 
-### Generate a plan
+### List supported operations
 
 ```bash
-magic-agent plan "set opacity to 50% on all clips in track 1" --pretty
+magic-agent ops list
 ```
 
-Output:
-```
-Execution Plan (v1.0)
-
-Target Project: My Project
-Target Timeline: Timeline 1
-
-Preconditions:
-  - ProjectOpen
-  - TimelineActive
-
-Operations:
-  1. set_clip_property
-      {
-        "selector": { "track": 1, "all": true },
-        "properties": { "Opacity": 50.0 }
-      }
-```
-
-### Execute changes
+### Run typed commands
 
 ```bash
-# Generate and execute
-magic-agent apply "set opacity to 50% on all clips" --yes
+# Add a marker
+magic-agent marker add 100 --color Red --name "Review"
 
-# Dry run (validate only)
-magic-agent apply "set opacity to 50%" --dry-run
+# Treat frame as relative to timeline start (useful if the timeline starts at 01:00:00:00)
+magic-agent marker add 0 --relative --color Blue --name "Start"
 
-# Execute from saved plan
-magic-agent plan "add a red marker at frame 100" > plan.json
-magic-agent apply --plan plan.json --yes
+# Enable a track
+magic-agent track enable --type video --index 2 --enable
+
+# Set clip properties
+magic-agent clip set-property --track 1 --index 0 --set Opacity=50 --set ZoomX=1.1
+
+# Import media
+magic-agent media import ~/media/clip1.mov ~/media/clip2.mov
+
+# Export timeline
+magic-agent timeline export --path ~/exports/project.fcpxml --format fcpxml
+```
+
+### Run any operation (raw JSON)
+
+```bash
+magic-agent op add_marker --params '{"frame":100,"color":"Red","name":"Review"}'
+magic-agent op add_marker --params '{"frame":0,"relative":true,"color":"Blue","name":"Start"}'
+```
+
+### Batch operations
+
+```bash
+cat > batch.json <<'JSON'
+[
+  { "op": "add_marker", "params": { "frame": 100, "color": "Red" } },
+  { "op": "set_current_timecode", "params": { "timecode": "00:00:10:00" } }
+]
+JSON
+
+magic-agent batch --file batch.json
 ```
 
 ## Supported Operations (~85 operations)
@@ -276,6 +268,58 @@ magic-agent apply --plan plan.json --yes
 
 ### Audio
 - `create_subtitles_from_audio` - Auto-generate subtitles
+- `detect_beats` - Analyze audio and add markers at downbeats (bar starts)
+
+#### Beat Detection
+
+Automatically detect musical beats in audio and add clip markers for editing to music. Uses BeatNet neural network for accurate downbeat detection.
+
+**Requirements:**
+
+1. **Python 3.10** (recommended for compatibility):
+   ```bash
+   brew install python@3.10
+   ```
+
+2. **Create a virtual environment:**
+   ```bash
+   /opt/homebrew/opt/python@3.10/bin/python3.10 -m venv ~/.magic-agent-venv
+   source ~/.magic-agent-venv/bin/activate
+   ```
+
+3. **Install dependencies:**
+   ```bash
+   pip install --upgrade pip
+   pip install "numpy<2.0" cython setuptools wheel
+   pip install git+https://github.com/CPJKU/madmom.git
+   pip install BeatNet librosa pyaudio
+   ```
+
+4. **Configure magic-agent** to use the venv (in `~/.config/magic-agent/config.toml`):
+   ```toml
+   [resolve]
+   python_path = "~/.magic-agent-venv/bin/python"
+   ```
+
+**Marker Colors:**
+| Type | Color | Description |
+|------|-------|-------------|
+| Downbeat | Red | First beat of each bar |
+| Beat | Blue | Regular beats (if enabled) |
+
+**Examples:**
+```bash
+# Add downbeat markers on audio track 1
+magic-agent op detect_beats --params '{"track":1,"track_type":"audio","mark_downbeats":true}'
+
+# Add markers on audio track 2
+magic-agent op detect_beats --params '{"track":2,"track_type":"audio","mark_downbeats":true}'
+
+# Analyze video track with embedded audio
+magic-agent op detect_beats --params '{"track":1,"track_type":"video","mark_downbeats":true}'
+```
+
+**Note:** Without BeatNet installed, the tool falls back to librosa which provides less accurate beat detection.
 
 ## Limitations
 
@@ -287,47 +331,49 @@ The Resolve scripting API does not support:
 - Audio automation
 - Trimming/slipping/sliding clips
 
-If you request an unsupported operation, the tool will explain what's not possible.
+If you run an unsupported operation, the tool will explain what's not possible.
 
 ## Examples
 
 ```bash
 # Batch property changes
-magic-agent apply "set opacity to 80% and zoom to 110% on all clips in video track 1" --yes
+magic-agent clip set-property --track 1 --all --set Opacity=80 --set ZoomX=1.1 --set ZoomY=1.1
 
 # Add markers
-magic-agent apply "add a red marker named 'Review' at frame 500 with note 'check audio'" --yes
+magic-agent marker add 500 --color Red --name "Review" --note "check audio"
+magic-agent op add_clip_marker --params '{"selector":{"track":1,"index":0},"frame":0,"color":"Blue","name":"Clip start"}'
 
 # Prepare render
-magic-agent apply "add a render job for mp4 h265 to ~/Renders/final" --yes
+magic-agent render add-job --format mp4 --codec H265 --path ~/Renders/final
 
 # Export timeline
-magic-agent apply "export the timeline as fcpxml to ~/exports/project.fcpxml" --yes
+magic-agent timeline export --path ~/exports/project.fcpxml --format fcpxml
 
 # Track management
-magic-agent apply "add a new video track and name it 'B-Roll'" --yes
-magic-agent apply "lock video track 2" --yes
+magic-agent track add --type video
+magic-agent track name --type video --index 2 --name "B-Roll"
+magic-agent track lock --type video --index 2 --lock
 
 # Color grading
-magic-agent apply "apply the LUT at /path/to/my.cube to the first clip" --yes
-magic-agent apply "copy grades from clip 0 to all other clips on track 1" --yes
-magic-agent apply "reset grades on the first clip" --yes
+magic-agent op apply_lut --params '{"selector":{"track":1,"index":0},"lut_path":"/path/to/my.cube"}'
+magic-agent op copy_grades --params '{"source":{"track":1,"index":0},"targets":{"track":1,"all":true}}'
+magic-agent op reset_grades --params '{"selector":{"track":1,"index":0}}'
 
 # Color groups
-magic-agent apply "create a color group called 'Hero Shots'" --yes
-magic-agent apply "assign the first clip to the 'Hero Shots' color group" --yes
+magic-agent op create_color_group --params '{"name":"Hero Shots"}'
+magic-agent op assign_to_color_group --params '{"selector":{"track":1,"index":0},"group":"Hero Shots"}'
 
 # Flags
-magic-agent apply "add a red flag to all clips on track 1" --yes
-magic-agent apply "clear all flags from the first clip" --yes
+magic-agent op add_flag --params '{"selector":{"track":1,"all":true},"color":"Red"}'
+magic-agent op clear_flags --params '{"selector":{"track":1,"index":0},"color":"All"}'
 
 # Media pool
-magic-agent apply "create a folder called 'B-Roll' in the media pool" --yes
-magic-agent apply "move clips 'clip1.mov' and 'clip2.mov' to the 'B-Roll' folder" --yes
+magic-agent op create_media_pool_folder --params '{"name":"B-Roll"}'
+magic-agent op move_media_pool_clips --params '{"clips":["clip1.mov","clip2.mov"],"target_folder":"B-Roll"}'
 
 # Render presets
-magic-agent apply "list available render presets" --yes
-magic-agent apply "load the 'YouTube 1080p' render preset" --yes
+magic-agent op get_render_presets
+magic-agent op load_render_preset --params '{"name":"YouTube 1080p"}'
 ```
 
 ## JSON Output
@@ -338,20 +384,55 @@ All commands output JSON by default (omit `--pretty`):
 magic-agent status | jq '.timeline.name'
 # "Timeline 1"
 
-magic-agent plan "add marker at frame 100" | jq '.operations'
-# [{"op": "add_marker", "params": {"frame": 100, "color": "Blue"}}]
+magic-agent op add_marker --params '{"frame":100,"color":"Blue"}' | jq '.frame'
+# 100
+```
+
+## LLM Integration
+
+Use `docs/ops.json` as a machine-readable catalog of operations and params.
+
+Key rules:
+- Clip selectors require exactly one of `index`, `name`, or `all`.
+- Track indices are 1-based; clip indices are 0-based.
+- `track_type` is optional in most clip selectors (defaults to `video`).
+- `clip set-property --set KEY=VALUE` coerces bool/number/JSON when possible.
+- Batch execution continues on errors; inspect `results[*].status`.
+
+Common patterns:
+```bash
+# Discover operations
+magic-agent ops list
+
+# Print machine-readable schema
+magic-agent ops schema
+
+# Pretty schema output (global flag)
+magic-agent --pretty ops schema
+
+# Schema output format override
+magic-agent ops schema --format raw
+
+# Execute any op (string params)
+magic-agent op add_marker --params '{"frame":100,"color":"Red"}'
+
+# Execute any op (file or stdin)
+magic-agent op add_marker --params-file params.json
+cat params.json | magic-agent op add_marker --params-stdin
+
+# Batch (array or wrapper format)
+magic-agent batch --stdin <<'JSON'
+[
+  { "op": "add_marker", "params": { "frame": 100, "color": "Red" } },
+  { "op": "set_current_timecode", "params": { "timecode": "00:00:10:00" } }
+]
+JSON
 ```
 
 ## Troubleshooting
 
 ### "DaVinci Resolve is not running"
 Start Resolve before running commands. The scripting API requires Resolve to be open.
-
-### "API key not configured"
-Set your API key in config or environment:
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
 
 ### "Bridge script not found"
 When running from source, use `cargo run` or ensure the `python/` directory is next to the binary.

@@ -387,6 +387,10 @@ def op_add_marker(resolve, params):
     name = params.get("name", "")
     note = params.get("note", "")
     duration = params.get("duration", 1)
+    relative = params.get("relative")
+
+    if not name:
+        name = " "
     
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
@@ -396,16 +400,97 @@ def op_add_marker(resolve, params):
     if not timeline:
         return error("No timeline is active", "NO_TIMELINE")
     
+    try:
+        frame = int(frame)
+    except (TypeError, ValueError):
+        return error("frame must be an integer", "INVALID_PARAM")
+
+    start_frame = timeline.GetStartFrame() or 0
+    if relative is True:
+        frame = start_frame + frame
+    elif relative is None and frame < start_frame:
+        frame = start_frame + frame
+
     result = timeline.AddMarker(frame, color, name, note, duration)
     if result:
         return success({"frame": frame})
     return error("Failed to add marker")
 
 
+def op_add_clip_marker(resolve, params):
+    """Add marker to clip(s)."""
+    selector = params.get("selector", {})
+    frame = params.get("frame", 0)
+    color = params.get("color", "Blue")
+    name = params.get("name", "")
+    note = params.get("note", "")
+    duration = params.get("duration", 1)
+    timeline_frame = params.get("timeline_frame", False)
+
+    if not name:
+        name = " "
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    try:
+        frame = int(frame)
+    except (TypeError, ValueError):
+        return error("frame must be an integer", "INVALID_PARAM")
+
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+
+    clips = []
+    if selector.get("all"):
+        clips = list(items)
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            clips = [items[idx]]
+    elif "name" in selector:
+        clips = [item for item in items if item.GetName() == selector["name"]]
+
+    if not clips:
+        return error("No clips selected")
+
+    added = 0
+    failed = 0
+    skipped = 0
+
+    for clip in clips:
+        marker_frame = frame
+        if timeline_frame:
+            start = clip.GetStart() or 0
+            marker_frame = frame - start
+
+        clip_duration = clip.GetDuration()
+        if clip_duration is not None and (marker_frame < 0 or marker_frame >= clip_duration):
+            skipped += 1
+            continue
+
+        result = clip.AddMarker(marker_frame, color, name, note, duration)
+        if result:
+            added += 1
+        else:
+            failed += 1
+
+    return success({"added": added, "failed": failed, "skipped": skipped})
+
+
 def op_delete_marker(resolve, params):
     """Delete markers."""
     frame = params.get("frame")
     color = params.get("color")
+    relative = params.get("relative")
     
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
@@ -417,6 +502,17 @@ def op_delete_marker(resolve, params):
     
     deleted = 0
     if frame is not None:
+        try:
+            frame = int(frame)
+        except (TypeError, ValueError):
+            return error("frame must be an integer", "INVALID_PARAM")
+
+        start_frame = timeline.GetStartFrame() or 0
+        if relative is True:
+            frame = start_frame + frame
+        elif relative is None and frame < start_frame:
+            frame = start_frame + frame
+
         if timeline.DeleteMarkerAtFrame(frame):
             deleted = 1
     elif color:
@@ -424,6 +520,59 @@ def op_delete_marker(resolve, params):
             deleted = 1  # API doesn't return count
     
     return success({"deleted": deleted})
+
+
+# =============================================================================
+# Marker Utilities
+# =============================================================================
+
+def op_clear_markers(resolve, params):
+    """Clear timeline and/or clip markers."""
+    clear_timeline = params.get("timeline", True)
+    clear_clips = params.get("clips", True)
+    track_type = params.get("track_type")
+    track_index = params.get("track")
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    counts = {
+        "timeline_deleted": 0,
+        "clip_deleted": 0,
+        "tracks_scanned": 0,
+        "clips_scanned": 0
+    }
+
+    if clear_timeline:
+        markers = timeline.GetMarkers() or {}
+        for frame in list(markers.keys()):
+            if timeline.DeleteMarkerAtFrame(frame):
+                counts["timeline_deleted"] += 1
+
+    if clear_clips:
+        track_types = [track_type] if track_type else ["video", "audio"]
+        for ttype in track_types:
+            max_track = timeline.GetTrackCount(ttype)
+            track_indices = [track_index] if track_index else range(1, max_track + 1)
+            for idx in track_indices:
+                counts["tracks_scanned"] += 1
+                items = timeline.GetItemListInTrack(ttype, idx) or []
+                for item in items:
+                    counts["clips_scanned"] += 1
+                    markers = item.GetMarkers() or {}
+                    for frame in list(markers.keys()):
+                        try:
+                            if item.DeleteMarkerAtFrame(frame):
+                                counts["clip_deleted"] += 1
+                        except Exception:
+                            pass
+
+    return success(counts)
 
 
 # =============================================================================
@@ -525,6 +674,10 @@ def op_add_render_job(resolve, params):
     if not project:
         return error("No project is open", "NO_PROJECT")
     
+    # Set format/codec only when explicitly provided
+    if "format" in params or "codec" in params:
+        project.SetCurrentRenderFormatAndCodec(format_name, codec)
+
     # Set render settings
     project.SetRenderSettings({
         "TargetDir": path,
@@ -1416,6 +1569,11 @@ def op_set_clip_enabled(resolve, params):
         if 0 <= idx < len(items):
             if items[idx].SetClipEnabled(enabled):
                 modified = 1
+    elif "name" in selector:
+        for item in items:
+            if item.GetName() == selector["name"]:
+                if item.SetClipEnabled(enabled):
+                    modified += 1
     
     return success({"modified": modified, "enabled": enabled})
 
@@ -1458,6 +1616,15 @@ def op_set_clip_color(resolve, params):
             else:
                 if items[idx].ClearClipColor():
                     modified = 1
+    elif "name" in selector:
+        for item in items:
+            if item.GetName() == selector["name"]:
+                if color:
+                    if item.SetClipColor(color):
+                        modified += 1
+                else:
+                    if item.ClearClipColor():
+                        modified += 1
     
     return success({"modified": modified, "color": color if color else "cleared"})
 
@@ -2975,6 +3142,353 @@ def op_refresh_lut_list(resolve, params):
 
 
 # =============================================================================
+# Beat Detection Operations
+# =============================================================================
+
+def ensure_audio_deps():
+    """Check and import audio dependencies.
+    
+    Checks for BeatNet (accurate neural network beat/downbeat detection).
+    Falls back to librosa if BeatNet not available.
+    Returns (BeatNet_class_or_None, librosa).
+    """
+    beatnet_class = None
+    librosa = None
+    
+    # Check for BeatNet (accurate downbeat detection)
+    try:
+        from BeatNet.BeatNet import BeatNet
+        beatnet_class = BeatNet
+    except ImportError:
+        print("BeatNet not installed. Will use librosa fallback (less accurate).", file=sys.stderr)
+        print("For accurate beat detection, install: pip install BeatNet", file=sys.stderr)
+    
+    # Check librosa (required for fallback and audio loading)
+    try:
+        import librosa
+    except ImportError:
+        raise RuntimeError(
+            "Missing required dependency: librosa\n\n"
+            "Please install dependencies:\n"
+            "  pip install librosa\n\n"
+            "For accurate beat detection (recommended):\n"
+            "  pip install 'numpy<2.0' cython\n"
+            "  pip install git+https://github.com/CPJKU/madmom.git\n"
+            "  pip install BeatNet librosa pyaudio\n\n"
+            "Then set python_path in ~/.config/magic-agent/config.toml:\n"
+            "  [resolve]\n"
+            "  python_path = \"~/.magic-agent-venv/bin/python\""
+        )
+    
+    return beatnet_class, librosa
+
+
+def get_clip_file_path(timeline_item):
+    """Get source file path from a timeline item."""
+    try:
+        media_pool_item = timeline_item.GetMediaPoolItem()
+        if not media_pool_item:
+            return None
+        return media_pool_item.GetClipProperty("File Path")
+    except Exception:
+        return None
+
+
+def get_clip_source_offset(timeline_item):
+    """Get the source in-point offset for a timeline item.
+    
+    Returns the frame offset into the source media where this clip starts.
+    This is needed to correctly map beat timestamps when a clip is trimmed.
+    """
+    try:
+        # GetLeftOffset returns how many frames from source start the clip begins
+        left_offset = timeline_item.GetLeftOffset()
+        return left_offset if left_offset else 0
+    except Exception:
+        return 0
+
+
+def op_detect_beats(resolve, params):
+    """Detect beats in audio and add markers to clips.
+    
+    Uses BeatNet (neural network) for accurate beat/downbeat detection.
+    Falls back to librosa if BeatNet is not installed.
+    
+    Adds markers directly to clips:
+    - Red markers: Downbeats (first beat of each bar)
+    - Blue markers: Regular beats (if enabled)
+    """
+    track = params.get("track", 1)
+    track_type = params.get("track_type", "audio")
+    mark_beats = params.get("mark_beats", False)  # Regular beats off by default
+    mark_downbeats = params.get("mark_downbeats", True)  # Bar starts (default)
+    
+    # Get project and timeline
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Get timeline FPS
+    settings = timeline.GetSetting()
+    fps = float(settings.get("timelineFrameRate", 24))
+    
+    # Get clips on track
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error(f"No clips on {track_type} track {track}", "NO_CLIPS")
+    
+    # Check dependencies
+    try:
+        BeatNetClass, librosa = ensure_audio_deps()
+    except Exception as e:
+        return error(f"{e}", "DEPS_FAILED")
+    
+    markers_added = {"beats": 0, "downbeats": 0}
+    processed_clips = 0
+    skipped_clips = []
+    using_beatnet = BeatNetClass is not None
+
+    def record_marker(frame_markers, counters, clip_frame, color, name, note):
+        existing = frame_markers.get(clip_frame)
+        if existing:
+            if existing["color"] == color:
+                return
+            if existing["color"] == "Red" and color != "Red":
+                return
+            if existing["color"] == "Blue" and color == "Red":
+                counters["beats"] = max(0, counters["beats"] - 1)
+        if color == "Red":
+            counters["downbeats"] += 1
+        else:
+            counters["beats"] += 1
+        frame_markers[clip_frame] = {
+            "color": color,
+            "name": name,
+            "note": note
+        }
+    
+    for item in items:
+        clip_name = item.GetName()
+        file_path = get_clip_file_path(item)
+        
+        if not file_path:
+            skipped_clips.append({"name": clip_name, "reason": "no file path"})
+            continue
+        
+        if not os.path.exists(file_path):
+            skipped_clips.append({"name": clip_name, "reason": "file not found"})
+            continue
+        
+        # Get clip timing info
+        source_offset = get_clip_source_offset(item)  # Source frame offset (in-point)
+        clip_duration = item.GetDuration()  # Clip duration in frames
+        
+        # Calculate source in/out in seconds for analysis bounds
+        source_in_sec = source_offset / fps
+        source_out_sec = (source_offset + clip_duration) / fps
+        
+        try:
+            print(f"Analyzing audio: {clip_name}", file=sys.stderr)
+            
+            # Dictionary to collect markers by CLIP-RELATIVE frame
+            frame_markers = {}
+            
+            if using_beatnet:
+                # Use BeatNet for accurate beat/downbeat detection
+                print("Using BeatNet (neural network) for beat detection", file=sys.stderr)
+                estimator = BeatNetClass(
+                    1,  # Model number
+                    mode='offline',
+                    inference_model='DBN',
+                    plot=[]  # No plotting
+                )
+                
+                # BeatNet.process returns numpy array: [[time, beat_position], ...]
+                # beat_position: 1 = downbeat, 2/3/4 = other beats in bar
+                output = estimator.process(file_path)
+                
+                if output is not None and len(output) > 0:
+                    for beat_time, beat_pos in output:
+                        # Skip beats outside the clip's source range
+                        if beat_time < source_in_sec or beat_time >= source_out_sec:
+                            continue
+                        
+                        # Calculate clip-relative frame (0-based from clip start)
+                        source_frame = beat_time * fps
+                        clip_frame = int(source_frame - source_offset)
+                        
+                        # Ensure frame is within clip bounds
+                        if clip_frame < 0 or clip_frame >= clip_duration:
+                            continue
+                        
+                        is_downbeat = (int(beat_pos) == 1)
+                        
+                        if is_downbeat and mark_downbeats:
+                            record_marker(
+                                frame_markers,
+                                markers_added,
+                                clip_frame,
+                                "Red",
+                                "Downbeat",
+                                "Bar start"
+                            )
+                        elif mark_beats:
+                            record_marker(
+                                frame_markers,
+                                markers_added,
+                                clip_frame,
+                                "Blue",
+                                "Beat",
+                                f"Beat {int(beat_pos)}"
+                            )
+            else:
+                # Fallback: Use librosa beat_track (less accurate)
+                print("Using librosa fallback (less accurate)", file=sys.stderr)
+                segment_offset = source_in_sec
+                segment_duration = source_out_sec - source_in_sec
+                if segment_duration <= 0:
+                    skipped_clips.append({"name": clip_name, "reason": "zero duration"})
+                    continue
+                y, sr = librosa.load(
+                    file_path,
+                    sr=22050,
+                    offset=segment_offset,
+                    duration=segment_duration
+                )
+                tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+                beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+
+                for i, beat_time in enumerate(beat_times):
+                    beat_time += segment_offset
+                    # Skip beats outside the clip's source range
+                    if beat_time < source_in_sec or beat_time >= source_out_sec:
+                        continue
+                    
+                    # Calculate clip-relative frame
+                    source_frame = beat_time * fps
+                    clip_frame = int(source_frame - source_offset)
+                    
+                    # Ensure frame is within clip bounds
+                    if clip_frame < 0 or clip_frame >= clip_duration:
+                        continue
+                    
+                    # Estimate downbeats (every 4 beats) - not accurate
+                    is_downbeat = (i % 4 == 0)
+                    
+                    if is_downbeat and mark_downbeats:
+                        record_marker(
+                            frame_markers,
+                            markers_added,
+                            clip_frame,
+                            "Red",
+                            "Downbeat",
+                            "Bar start (estimated)"
+                        )
+                    elif mark_beats:
+                        record_marker(
+                            frame_markers,
+                            markers_added,
+                            clip_frame,
+                            "Blue",
+                            "Beat",
+                            f"Beat {(i % 4) + 1}"
+                        )
+            
+            # Add all markers to the CLIP
+            for frame, marker_info in frame_markers.items():
+                result = item.AddMarker(
+                    frame,
+                    marker_info["color"],
+                    marker_info["name"],
+                    marker_info["note"],
+                    1  # duration
+                )
+                if not result:
+                    print(f"Failed to add marker at frame {frame}", file=sys.stderr)
+            
+            processed_clips += 1
+            print(f"Added {len(frame_markers)} markers to {clip_name}", file=sys.stderr)
+            
+        except Exception as e:
+            skipped_clips.append({"name": clip_name, "reason": str(e)})
+            print(f"Failed to process {clip_name}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
+    total = markers_added["beats"] + markers_added["downbeats"]
+    
+    return success({
+        "markers_added": total,
+        "beats": markers_added["beats"],
+        "downbeats": markers_added["downbeats"],
+        "clips_processed": processed_clips,
+        "clips_skipped": skipped_clips if skipped_clips else None,
+        "engine": "BeatNet" if using_beatnet else "librosa"
+    })
+
+
+def op_check_audio_deps(resolve, params):
+    """Check if audio analysis dependencies are installed."""
+    deps = {
+        "beatnet": False,
+        "librosa": False,
+        "madmom": False,
+        "numpy": False,
+        "ffmpeg": False
+    }
+    
+    # Check Python packages
+    try:
+        from BeatNet.BeatNet import BeatNet
+        deps["beatnet"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import librosa
+        deps["librosa"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import madmom
+        deps["madmom"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import numpy
+        deps["numpy"] = True
+    except ImportError:
+        pass
+    
+    # Check ffmpeg
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            deps["ffmpeg"] = True
+    except Exception:
+        pass
+    
+    all_installed = all(deps.values())
+    
+    return success({
+        "all_installed": all_installed,
+        "dependencies": deps
+    })
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -2995,7 +3509,9 @@ OPERATIONS = {
     
     # Markers
     "add_marker": op_add_marker,
+    "add_clip_marker": op_add_clip_marker,
     "delete_marker": op_delete_marker,
+    "clear_markers": op_clear_markers,
     
     # Tracks
     "add_track": op_add_track,
@@ -3060,6 +3576,8 @@ OPERATIONS = {
     
     # Audio
     "create_subtitles_from_audio": op_create_subtitles_from_audio,
+    "detect_beats": op_detect_beats,
+    "check_audio_deps": op_check_audio_deps,
     
     # Stills & Gallery
     "grab_still": op_grab_still,

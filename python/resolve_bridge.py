@@ -1508,6 +1508,597 @@ def op_rename_fusion_comp(resolve, params):
     return error(f"Failed to rename Fusion composition")
 
 
+def get_fusion_comp_from_clip(item, comp_index=1, auto_create=False):
+    """Helper to get a Fusion composition from a timeline item, optionally creating it."""
+    comp_count = item.GetFusionCompCount()
+    
+    if comp_count == 0 or comp_index > comp_count:
+        if auto_create:
+            comp = item.AddFusionComp()
+            if not comp:
+                return None
+        else:
+            return None
+    else:
+        comp = item.GetFusionCompByIndex(comp_index)
+    
+    return comp
+
+
+def ensure_media_nodes(comp):
+    """Ensure MediaIn and MediaOut exist and are connected in a Fusion comp."""
+    tools = comp.GetToolList()
+    media_in = None
+    media_out = None
+    
+    for tool in tools.values():
+        tool_name = tool.GetAttrs()["TOOL_Name"]
+        if tool_name == "MediaIn1":
+            media_in = tool
+        elif tool_name == "MediaOut1":
+            media_out = tool
+    
+    if not media_in:
+        media_in = comp.AddTool("MediaIn")
+        media_in.SetAttrs({"TOOLS_Name": "MediaIn1"})
+    
+    if not media_out:
+        media_out = comp.AddTool("MediaOut")
+        media_out.SetAttrs({"TOOLS_Name": "MediaOut1"})
+    
+    return media_in, media_out
+
+
+def find_tool_by_name(comp, tool_name):
+    """Find a tool in a Fusion composition by name."""
+    tools = comp.GetToolList()
+    for tool in tools.values():
+        if tool.GetAttrs()["TOOL_Name"] == tool_name:
+            return tool
+    return None
+
+
+def insert_tool_in_chain(comp, tool, before_tool_name="MediaOut1"):
+    """Insert a tool into the connection chain before a specified tool."""
+    before_tool = find_tool_by_name(comp, before_tool_name)
+    if not before_tool:
+        return False
+    
+    input_info = before_tool.GetInputList()
+    for input_name in input_info:
+        input_value = before_tool.GetInput(input_name)
+        if input_value and hasattr(input_value, "GetAttrs"):
+            before_tool.SetInput(input_name, tool)
+            break
+    
+    return True
+
+
+def auto_layout_tool(comp, tool, x_offset=0, y_offset=0):
+    """Auto-position a tool in the flow graph based on existing tools."""
+    tools = comp.GetToolList()
+    max_x = 0
+    max_y = 0
+    
+    for t in tools.values():
+        attrs = t.GetAttrs()
+        pos = attrs.get("TOOLB_Passthrough", None)
+        if pos:
+            max_x = max(max_x, pos.get("X", 0))
+            max_y = max(max_y, pos.get("Y", 0))
+    
+    tool.SetAttrs({"TOOLB_Passthrough": {"X": max_x + x_offset, "Y": max_y + y_offset}})
+    return True
+
+
+def get_input_value_type(input_name):
+    """Return the expected type for a given input name based on common Fusion tool inputs."""
+    numeric_inputs = ["Size", "Strength", "Gain", "Gamma", "Lift", "Saturation", "Scale", "Rotation", "Tracking", "LineSpacing"]
+    boolean_inputs = ["Bold", "Italic", "Enabled"]
+    table_inputs = ["Center", "Position", "Size"]
+    color_inputs = ["Red1", "Green1", "Blue1", "Alpha1", "Red", "Green", "Blue", "Alpha"]
+    
+    if input_name in numeric_inputs:
+        return "number"
+    elif input_name in boolean_inputs:
+        return "boolean"
+    elif input_name in table_inputs:
+        return "table"
+    elif input_name in color_inputs:
+        return "number"
+    else:
+        return "string"
+
+
+def op_get_fusion_tools(resolve, params):
+    """Get list of tools in a Fusion composition."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=False)
+    if not comp:
+        return error(f"No Fusion composition at index {comp_index}", "NO_FUSION_COMP")
+    
+    tools = []
+    tool_list = comp.GetToolList()
+    
+    for tool in tool_list.values():
+        attrs = tool.GetAttrs()
+        tools.append({
+            "name": attrs.get("TOOL_Name", ""),
+            "type": attrs.get("TOOL_Name", ""),
+            "id": attrs.get("TOOL_ID", ""),
+        })
+    
+    return success({"tools": tools, "count": len(tools), "comp_index": comp_index})
+
+
+def op_add_fusion_tool(resolve, params):
+    """Add a Fusion tool to a composition."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    tool_type = params.get("tool_type", "")
+    name = params.get("name", None)
+    position = params.get("position", None)
+    
+    if not tool_type:
+        return error("Tool type is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=True)
+    if not comp:
+        return error("Failed to get or create Fusion composition", "FUSION_COMP_ERROR")
+    
+    effect_types = ["Blur", "Transform", "ColorCorrector", "BrightnessContrast", "Sharpen"]
+    is_effect = tool_type in effect_types
+    
+    if is_effect:
+        media_in, media_out = ensure_media_nodes(comp)
+    
+    tool = comp.AddTool(tool_type)
+    if not tool:
+        return error(f"Failed to add tool: {tool_type}", "ADD_TOOL_ERROR")
+    
+    if name:
+        tool.SetAttrs({"TOOLS_Name": name})
+    else:
+        tool_name = tool.GetAttrs()["TOOL_Name"]
+    
+    if position:
+        tool.SetAttrs({"TOOLB_Passthrough": {"X": position.get("x", 0), "Y": position.get("y", 0)}})
+    else:
+        auto_layout_tool(comp, tool, x_offset=200, y_offset=0)
+    
+    inputs = []
+    input_list = tool.GetInputList()
+    for input_name in input_list:
+        inputs.append({"name": input_name, "type": get_input_value_type(input_name)})
+    
+    tool_name = tool.GetAttrs()["TOOL_Name"]
+    return success({
+        "tool_name": tool_name,
+        "tool_type": tool_type,
+        "inputs": inputs,
+        "comp_index": comp_index
+    })
+
+
+def op_set_fusion_tool_input(resolve, params):
+    """Set an input value on a Fusion tool."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    tool_name = params.get("tool_name", "")
+    input_name = params.get("input_name", "")
+    value = params.get("value", None)
+    
+    if not tool_name:
+        return error("Tool name is required", "INVALID_PARAM")
+    if not input_name:
+        return error("Input name is required", "INVALID_PARAM")
+    if value is None:
+        return error("Value is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=False)
+    if not comp:
+        return error(f"No Fusion composition at index {comp_index}", "NO_FUSION_COMP")
+    
+    tool = find_tool_by_name(comp, tool_name)
+    if not tool:
+        return error(f"Tool not found: {tool_name}", "TOOL_NOT_FOUND")
+    
+    previous_value = tool.GetInput(input_name)
+    
+    try:
+        result = tool.SetInput(input_name, value)
+        if result:
+            return success({
+                "set": True,
+                "tool_name": tool_name,
+                "input_name": input_name,
+                "value": value,
+                "previous_value": previous_value
+            })
+        return error(f"Failed to set input {input_name} on {tool_name}")
+    except Exception as e:
+        return error(f"Failed to set input: {e}", "SET_INPUT_ERROR")
+
+
+def op_get_fusion_tool_inputs(resolve, params):
+    """Get all inputs and values from a Fusion tool."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    tool_name = params.get("tool_name", "")
+    
+    if not tool_name:
+        return error("Tool name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=False)
+    if not comp:
+        return error(f"No Fusion composition at index {comp_index}", "NO_FUSION_COMP")
+    
+    tool = find_tool_by_name(comp, tool_name)
+    if not tool:
+        return error(f"Tool not found: {tool_name}", "TOOL_NOT_FOUND")
+    
+    inputs = []
+    input_list = tool.GetInputList()
+    for input_name in input_list:
+        value = tool.GetInput(input_name)
+        inputs.append({
+            "name": input_name,
+            "value": value,
+            "type": get_input_value_type(input_name)
+        })
+    
+    return success({
+        "tool_name": tool_name,
+        "inputs": inputs,
+        "count": len(inputs),
+        "comp_index": comp_index
+    })
+
+
+def op_connect_fusion_tools(resolve, params):
+    """Connect output of one tool to input of another."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    from_tool = params.get("from_tool", "")
+    to_tool = params.get("to_tool", "")
+    to_input = params.get("to_input", "Input")
+    
+    if not from_tool:
+        return error("Source tool name is required", "INVALID_PARAM")
+    if not to_tool:
+        return error("Destination tool name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=False)
+    if not comp:
+        return error(f"No Fusion composition at index {comp_index}", "NO_FUSION_COMP")
+    
+    source = find_tool_by_name(comp, from_tool)
+    if not source:
+        return error(f"Source tool not found: {from_tool}", "TOOL_NOT_FOUND")
+    
+    destination = find_tool_by_name(comp, to_tool)
+    if not destination:
+        return error(f"Destination tool not found: {to_tool}", "TOOL_NOT_FOUND")
+    
+    result = destination.SetInput(to_input, source)
+    if result:
+        return success({
+            "connected": True,
+            "from": from_tool,
+            "to": to_tool,
+            "input": to_input,
+            "comp_index": comp_index
+        })
+    return error(f"Failed to connect {from_tool} to {to_tool}")
+
+
+def op_delete_fusion_tool(resolve, params):
+    """Delete a tool from a Fusion composition."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    tool_name = params.get("tool_name", "")
+    
+    if not tool_name:
+        return error("Tool name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=False)
+    if not comp:
+        return error(f"No Fusion composition at index {comp_index}", "NO_FUSION_COMP")
+    
+    tool = find_tool_by_name(comp, tool_name)
+    if not tool:
+        return error(f"Tool not found: {tool_name}", "TOOL_NOT_FOUND")
+    
+    result = comp.DeleteTool(tool)
+    if result:
+        return success({
+            "deleted": True,
+            "tool_name": tool_name,
+            "comp_index": comp_index
+        })
+    return error(f"Failed to delete tool: {tool_name}")
+
+
+def op_add_text_overlay(resolve, params):
+    """Add a Text+ overlay to a clip with specified content and style."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    text = params.get("text", "")
+    font = params.get("font", "Arial")
+    size = params.get("size", 0.1)
+    color = params.get("color", {"r": 1, "g": 1, "b": 1})
+    position = params.get("position", {"x": 0.5, "y": 0.5})
+    comp_index = params.get("comp_index", 1)
+    
+    if not text:
+        return error("Text content is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=True)
+    if not comp:
+        return error("Failed to get or create Fusion composition", "FUSION_COMP_ERROR")
+    
+    text_tool = comp.AddTool("TextPlus")
+    if not text_tool:
+        return error("Failed to add TextPlus tool", "ADD_TOOL_ERROR")
+    
+    auto_layout_tool(comp, text_tool, x_offset=200, y_offset=0)
+    
+    text_tool.SetInput("StyledText", text)
+    text_tool.SetInput("Font", font)
+    text_tool.SetInput("Size", size)
+    text_tool.SetInput("Red1", color.get("r", 1))
+    text_tool.SetInput("Green1", color.get("g", 1))
+    text_tool.SetInput("Blue1", color.get("b", 1))
+    text_tool.SetInput("Center", position)
+    
+    tool_name = text_tool.GetAttrs()["TOOL_Name"]
+    return success({
+        "tool_name": tool_name,
+        "text": text,
+        "comp_index": comp_index
+    })
+
+
+def op_add_blur_effect(resolve, params):
+    """Add a Blur effect to a clip."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    strength = params.get("strength", 5.0)
+    comp_index = params.get("comp_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=True)
+    if not comp:
+        return error("Failed to get or create Fusion composition", "FUSION_COMP_ERROR")
+    
+    media_in, media_out = ensure_media_nodes(comp)
+    
+    blur_tool = comp.AddTool("Blur")
+    if not blur_tool:
+        return error("Failed to add Blur tool", "ADD_TOOL_ERROR")
+    
+    auto_layout_tool(comp, blur_tool, x_offset=200, y_offset=0)
+    
+    blur_tool.SetInput("Size", strength)
+    
+    media_out.SetInput("Input", blur_tool)
+    blur_tool.SetInput("Input", media_in)
+    
+    tool_name = blur_tool.GetAttrs()["TOOL_Name"]
+    return success({
+        "tool_name": tool_name,
+        "strength": strength,
+        "comp_index": comp_index
+    })
+
+
+def op_add_transform_effect(resolve, params):
+    """Add a Transform effect to a clip."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    position = params.get("position", None)
+    scale = params.get("scale", 1.0)
+    rotation = params.get("rotation", 0.0)
+    comp_index = params.get("comp_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=True)
+    if not comp:
+        return error("Failed to get or create Fusion composition", "FUSION_COMP_ERROR")
+    
+    media_in, media_out = ensure_media_nodes(comp)
+    
+    transform_tool = comp.AddTool("Transform")
+    if not transform_tool:
+        return error("Failed to add Transform tool", "ADD_TOOL_ERROR")
+    
+    auto_layout_tool(comp, transform_tool, x_offset=200, y_offset=0)
+    
+    transform_tool.SetInput("Size", scale)
+    transform_tool.SetInput("Angle", rotation)
+    
+    if position:
+        transform_tool.SetInput("Center", position)
+    
+    media_out.SetInput("Input", transform_tool)
+    transform_tool.SetInput("Input", media_in)
+    
+    tool_name = transform_tool.GetAttrs()["TOOL_Name"]
+    return success({
+        "tool_name": tool_name,
+        "scale": scale,
+        "rotation": rotation,
+        "comp_index": comp_index
+    })
+
+
+def op_add_color_correction(resolve, params):
+    """Add color correction to a clip."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    gain = params.get("gain", 1.0)
+    gamma = params.get("gamma", 1.0)
+    lift = params.get("lift", 0.0)
+    saturation = params.get("saturation", 1.0)
+    comp_index = params.get("comp_index", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    comp = get_fusion_comp_from_clip(item, comp_index, auto_create=True)
+    if not comp:
+        return error("Failed to get or create Fusion composition", "FUSION_COMP_ERROR")
+    
+    media_in, media_out = ensure_media_nodes(comp)
+    
+    cc_tool = comp.AddTool("ColorCorrector")
+    if not cc_tool:
+        return error("Failed to add ColorCorrector tool", "ADD_TOOL_ERROR")
+    
+    auto_layout_tool(comp, cc_tool, x_offset=200, y_offset=0)
+    
+    cc_tool.SetInput("Gain", gain)
+    cc_tool.SetInput("Gamma", gamma)
+    cc_tool.SetInput("Lift", lift)
+    cc_tool.SetInput("Saturation", saturation)
+    
+    media_out.SetInput("Input", cc_tool)
+    cc_tool.SetInput("Input", media_in)
+    
+    tool_name = cc_tool.GetAttrs()["TOOL_Name"]
+    return success({
+        "tool_name": tool_name,
+        "gain": gain,
+        "gamma": gamma,
+        "lift": lift,
+        "saturation": saturation,
+        "comp_index": comp_index
+    })
+
+
 def op_export_lut_from_clip(resolve, params):
     """Export LUT from timeline item."""
     track = params.get("track", 1)
@@ -4759,6 +5350,17 @@ OPERATIONS = {
     "export_lut_from_clip": op_export_lut_from_clip,
     "regenerate_magic_mask": op_regenerate_magic_mask,
     "get_linked_items": op_get_linked_items,
+    # Fusion Node Operations
+    "get_fusion_tools": op_get_fusion_tools,
+    "add_fusion_tool": op_add_fusion_tool,
+    "set_fusion_tool_input": op_set_fusion_tool_input,
+    "get_fusion_tool_inputs": op_get_fusion_tool_inputs,
+    "connect_fusion_tools": op_connect_fusion_tools,
+    "delete_fusion_tool": op_delete_fusion_tool,
+    "add_text_overlay": op_add_text_overlay,
+    "add_blur_effect": op_add_blur_effect,
+    "add_transform_effect": op_add_transform_effect,
+    "add_color_correction": op_add_color_correction,
     
     # Generators & Titles
     "insert_generator": op_insert_generator,

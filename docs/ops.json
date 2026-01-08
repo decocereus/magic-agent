@@ -2623,6 +2623,341 @@
         "type": "object",
         "properties": {}
       }
+    },
+    {
+      "name": "get_fusion_tools",
+      "summary": "List all tools in a Fusion composition",
+      "params": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_fusion_tool",
+      "summary": "Add a Fusion tool to a composition",
+      "params": {
+        "type": "object",
+        "required": ["tool_type"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          },
+          "tool_type": {
+            "type": "string",
+            "description": "Tool type (TextPlus, Background, Merge, Transform, Blur, FastNoise, etc.)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional custom tool name"
+          },
+          "position": {
+            "type": "object",
+            "description": "Flow graph position in Fusion coordinates",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "set_fusion_tool_input",
+      "summary": "Set an input value on a Fusion tool",
+      "params": {
+        "type": "object",
+        "required": ["tool_name", "input_name", "value"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "Tool name in composition"
+          },
+          "input_name": {
+            "type": "string",
+            "description": "Input name (e.g., StyledText, Size, Red1, Center)"
+          },
+          "value": {
+            "description": "Value to set (string, number, boolean, or object for tables)"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_fusion_tool_inputs",
+      "summary": "Get all inputs and values from a Fusion tool",
+      "params": {
+        "type": "object",
+        "required": ["tool_name"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "Tool name in composition"
+          }
+        }
+      }
+    },
+    {
+      "name": "connect_fusion_tools",
+      "summary": "Connect output of one tool to input of another",
+      "params": {
+        "type": "object",
+        "required": ["from_tool", "to_tool"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          },
+          "from_tool": {
+            "type": "string",
+            "description": "Source tool name"
+          },
+          "to_tool": {
+            "type": "string",
+            "description": "Destination tool name"
+          },
+          "to_input": {
+            "type": "string",
+            "description": "Input name on destination (default: Input)"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_fusion_tool",
+      "summary": "Delete a tool from a Fusion composition",
+      "params": {
+        "type": "object",
+        "required": ["tool_name"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "Tool name to delete"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_text_overlay",
+      "summary": "Add a Text+ overlay to a clip",
+      "params": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content"
+          },
+          "font": {
+            "type": "string",
+            "description": "Font name"
+          },
+          "size": {
+            "type": "number",
+            "description": "Text size (0-1 range)"
+          },
+          "color": {
+            "$ref": "#/definitions/Color",
+            "description": "Text color (RGB 0-1)"
+          },
+          "position": {
+            "type": "object",
+            "description": "Center position (0-1 range)",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            }
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_blur_effect",
+      "summary": "Add a Blur effect to a clip",
+      "params": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "strength": {
+            "type": "number",
+            "description": "Blur strength/size"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_transform_effect",
+      "summary": "Add a Transform effect to a clip",
+      "params": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "position": {
+            "type": "object",
+            "description": "Center offset",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            }
+          },
+          "scale": {
+            "type": "number",
+            "description": "Scale factor"
+          },
+          "rotation": {
+            "type": "number",
+            "description": "Rotation in degrees"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_color_correction",
+      "summary": "Add color correction to a clip",
+      "params": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": "integer",
+            "description": "Track index (1-based)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Clip index on track (0-based)"
+          },
+          "gain": {
+            "type": "number",
+            "description": "Highlights"
+          },
+          "gamma": {
+            "type": "number",
+            "description": "Midtones"
+          },
+          "lift": {
+            "type": "number",
+            "description": "Shadows"
+          },
+          "saturation": {
+            "type": "number",
+            "description": "Color saturation"
+          },
+          "comp_index": {
+            "type": "integer",
+            "description": "Fusion comp index (1-based)"
+          }
+        }
+      }
     }
   ]
 }

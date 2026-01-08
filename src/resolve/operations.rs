@@ -175,4 +175,15 @@ pub const ALL: &[&str] = &[
     "set_clip_cache_mode",
     "get_clip_cache_mode",
     "refresh_lut_list",
+    // Fusion Node Operations
+    "get_fusion_tools",
+    "add_fusion_tool",
+    "set_fusion_tool_input",
+    "get_fusion_tool_inputs",
+    "connect_fusion_tools",
+    "delete_fusion_tool",
+    "add_text_overlay",
+    "add_blur_effect",
+    "add_transform_effect",
+    "add_color_correction",
 ];

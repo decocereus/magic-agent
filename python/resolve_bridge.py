@@ -387,6 +387,10 @@ def op_add_marker(resolve, params):
     name = params.get("name", "")
     note = params.get("note", "")
     duration = params.get("duration", 1)
+    relative = params.get("relative")
+
+    if not name:
+        name = " "
     
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
@@ -396,16 +400,97 @@ def op_add_marker(resolve, params):
     if not timeline:
         return error("No timeline is active", "NO_TIMELINE")
     
+    try:
+        frame = int(frame)
+    except (TypeError, ValueError):
+        return error("frame must be an integer", "INVALID_PARAM")
+
+    start_frame = timeline.GetStartFrame() or 0
+    if relative is True:
+        frame = start_frame + frame
+    elif relative is None and frame < start_frame:
+        frame = start_frame + frame
+
     result = timeline.AddMarker(frame, color, name, note, duration)
     if result:
         return success({"frame": frame})
     return error("Failed to add marker")
 
 
+def op_add_clip_marker(resolve, params):
+    """Add marker to clip(s)."""
+    selector = params.get("selector", {})
+    frame = params.get("frame", 0)
+    color = params.get("color", "Blue")
+    name = params.get("name", "")
+    note = params.get("note", "")
+    duration = params.get("duration", 1)
+    timeline_frame = params.get("timeline_frame", False)
+
+    if not name:
+        name = " "
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    try:
+        frame = int(frame)
+    except (TypeError, ValueError):
+        return error("frame must be an integer", "INVALID_PARAM")
+
+    track = selector.get("track", 1)
+    track_type = selector.get("track_type", "video")
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error("No clips found")
+
+    clips = []
+    if selector.get("all"):
+        clips = list(items)
+    elif "index" in selector:
+        idx = selector["index"]
+        if 0 <= idx < len(items):
+            clips = [items[idx]]
+    elif "name" in selector:
+        clips = [item for item in items if item.GetName() == selector["name"]]
+
+    if not clips:
+        return error("No clips selected")
+
+    added = 0
+    failed = 0
+    skipped = 0
+
+    for clip in clips:
+        marker_frame = frame
+        if timeline_frame:
+            start = clip.GetStart() or 0
+            marker_frame = frame - start
+
+        clip_duration = clip.GetDuration()
+        if clip_duration is not None and (marker_frame < 0 or marker_frame >= clip_duration):
+            skipped += 1
+            continue
+
+        result = clip.AddMarker(marker_frame, color, name, note, duration)
+        if result:
+            added += 1
+        else:
+            failed += 1
+
+    return success({"added": added, "failed": failed, "skipped": skipped})
+
+
 def op_delete_marker(resolve, params):
     """Delete markers."""
     frame = params.get("frame")
     color = params.get("color")
+    relative = params.get("relative")
     
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
@@ -417,6 +502,17 @@ def op_delete_marker(resolve, params):
     
     deleted = 0
     if frame is not None:
+        try:
+            frame = int(frame)
+        except (TypeError, ValueError):
+            return error("frame must be an integer", "INVALID_PARAM")
+
+        start_frame = timeline.GetStartFrame() or 0
+        if relative is True:
+            frame = start_frame + frame
+        elif relative is None and frame < start_frame:
+            frame = start_frame + frame
+
         if timeline.DeleteMarkerAtFrame(frame):
             deleted = 1
     elif color:
@@ -424,6 +520,59 @@ def op_delete_marker(resolve, params):
             deleted = 1  # API doesn't return count
     
     return success({"deleted": deleted})
+
+
+# =============================================================================
+# Marker Utilities
+# =============================================================================
+
+def op_clear_markers(resolve, params):
+    """Clear timeline and/or clip markers."""
+    clear_timeline = params.get("timeline", True)
+    clear_clips = params.get("clips", True)
+    track_type = params.get("track_type")
+    track_index = params.get("track")
+
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+
+    counts = {
+        "timeline_deleted": 0,
+        "clip_deleted": 0,
+        "tracks_scanned": 0,
+        "clips_scanned": 0
+    }
+
+    if clear_timeline:
+        markers = timeline.GetMarkers() or {}
+        for frame in list(markers.keys()):
+            if timeline.DeleteMarkerAtFrame(frame):
+                counts["timeline_deleted"] += 1
+
+    if clear_clips:
+        track_types = [track_type] if track_type else ["video", "audio"]
+        for ttype in track_types:
+            max_track = timeline.GetTrackCount(ttype)
+            track_indices = [track_index] if track_index else range(1, max_track + 1)
+            for idx in track_indices:
+                counts["tracks_scanned"] += 1
+                items = timeline.GetItemListInTrack(ttype, idx) or []
+                for item in items:
+                    counts["clips_scanned"] += 1
+                    markers = item.GetMarkers() or {}
+                    for frame in list(markers.keys()):
+                        try:
+                            if item.DeleteMarkerAtFrame(frame):
+                                counts["clip_deleted"] += 1
+                        except Exception:
+                            pass
+
+    return success(counts)
 
 
 # =============================================================================
@@ -525,6 +674,10 @@ def op_add_render_job(resolve, params):
     if not project:
         return error("No project is open", "NO_PROJECT")
     
+    # Set format/codec only when explicitly provided
+    if "format" in params or "codec" in params:
+        project.SetCurrentRenderFormatAndCodec(format_name, codec)
+
     # Set render settings
     project.SetRenderSettings({
         "TargetDir": path,
@@ -1416,6 +1569,11 @@ def op_set_clip_enabled(resolve, params):
         if 0 <= idx < len(items):
             if items[idx].SetClipEnabled(enabled):
                 modified = 1
+    elif "name" in selector:
+        for item in items:
+            if item.GetName() == selector["name"]:
+                if item.SetClipEnabled(enabled):
+                    modified += 1
     
     return success({"modified": modified, "enabled": enabled})
 
@@ -1458,6 +1616,15 @@ def op_set_clip_color(resolve, params):
             else:
                 if items[idx].ClearClipColor():
                     modified = 1
+    elif "name" in selector:
+        for item in items:
+            if item.GetName() == selector["name"]:
+                if color:
+                    if item.SetClipColor(color):
+                        modified += 1
+                else:
+                    if item.ClearClipColor():
+                        modified += 1
     
     return success({"modified": modified, "color": color if color else "cleared"})
 
@@ -3084,6 +3251,25 @@ def op_detect_beats(resolve, params):
     processed_clips = 0
     skipped_clips = []
     using_beatnet = BeatNetClass is not None
+
+    def record_marker(frame_markers, counters, clip_frame, color, name, note):
+        existing = frame_markers.get(clip_frame)
+        if existing:
+            if existing["color"] == color:
+                return
+            if existing["color"] == "Red" and color != "Red":
+                return
+            if existing["color"] == "Blue" and color == "Red":
+                counters["beats"] = max(0, counters["beats"] - 1)
+        if color == "Red":
+            counters["downbeats"] += 1
+        else:
+            counters["beats"] += 1
+        frame_markers[clip_frame] = {
+            "color": color,
+            "name": name,
+            "note": note
+        }
     
     for item in items:
         clip_name = item.GetName()
@@ -3128,7 +3314,7 @@ def op_detect_beats(resolve, params):
                 if output is not None and len(output) > 0:
                     for beat_time, beat_pos in output:
                         # Skip beats outside the clip's source range
-                        if beat_time < source_in_sec or beat_time > source_out_sec:
+                        if beat_time < source_in_sec or beat_time >= source_out_sec:
                             continue
                         
                         # Calculate clip-relative frame (0-based from clip start)
@@ -3142,29 +3328,44 @@ def op_detect_beats(resolve, params):
                         is_downbeat = (int(beat_pos) == 1)
                         
                         if is_downbeat and mark_downbeats:
-                            frame_markers[clip_frame] = {
-                                "color": "Red",
-                                "name": "Downbeat",
-                                "note": f"Bar start"
-                            }
-                            markers_added["downbeats"] += 1
-                        elif mark_beats and clip_frame not in frame_markers:
-                            frame_markers[clip_frame] = {
-                                "color": "Blue",
-                                "name": "Beat",
-                                "note": f"Beat {int(beat_pos)}"
-                            }
-                            markers_added["beats"] += 1
+                            record_marker(
+                                frame_markers,
+                                markers_added,
+                                clip_frame,
+                                "Red",
+                                "Downbeat",
+                                "Bar start"
+                            )
+                        elif mark_beats:
+                            record_marker(
+                                frame_markers,
+                                markers_added,
+                                clip_frame,
+                                "Blue",
+                                "Beat",
+                                f"Beat {int(beat_pos)}"
+                            )
             else:
                 # Fallback: Use librosa beat_track (less accurate)
                 print("Using librosa fallback (less accurate)", file=sys.stderr)
-                y, sr = librosa.load(file_path, sr=22050)
+                segment_offset = source_in_sec
+                segment_duration = source_out_sec - source_in_sec
+                if segment_duration <= 0:
+                    skipped_clips.append({"name": clip_name, "reason": "zero duration"})
+                    continue
+                y, sr = librosa.load(
+                    file_path,
+                    sr=22050,
+                    offset=segment_offset,
+                    duration=segment_duration
+                )
                 tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
                 beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-                
+
                 for i, beat_time in enumerate(beat_times):
+                    beat_time += segment_offset
                     # Skip beats outside the clip's source range
-                    if beat_time < source_in_sec or beat_time > source_out_sec:
+                    if beat_time < source_in_sec or beat_time >= source_out_sec:
                         continue
                     
                     # Calculate clip-relative frame
@@ -3179,19 +3380,23 @@ def op_detect_beats(resolve, params):
                     is_downbeat = (i % 4 == 0)
                     
                     if is_downbeat and mark_downbeats:
-                        frame_markers[clip_frame] = {
-                            "color": "Red",
-                            "name": "Downbeat",
-                            "note": "Bar start (estimated)"
-                        }
-                        markers_added["downbeats"] += 1
-                    elif mark_beats and clip_frame not in frame_markers:
-                        frame_markers[clip_frame] = {
-                            "color": "Blue",
-                            "name": "Beat",
-                            "note": f"Beat {(i % 4) + 1}"
-                        }
-                        markers_added["beats"] += 1
+                        record_marker(
+                            frame_markers,
+                            markers_added,
+                            clip_frame,
+                            "Red",
+                            "Downbeat",
+                            "Bar start (estimated)"
+                        )
+                    elif mark_beats:
+                        record_marker(
+                            frame_markers,
+                            markers_added,
+                            clip_frame,
+                            "Blue",
+                            "Beat",
+                            f"Beat {(i % 4) + 1}"
+                        )
             
             # Add all markers to the CLIP
             for frame, marker_info in frame_markers.items():
@@ -3304,7 +3509,9 @@ OPERATIONS = {
     
     # Markers
     "add_marker": op_add_marker,
+    "add_clip_marker": op_add_clip_marker,
     "delete_marker": op_delete_marker,
+    "clear_markers": op_clear_markers,
     
     # Tracks
     "add_track": op_add_track,

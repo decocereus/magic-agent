@@ -1,54 +1,228 @@
 use anyhow::{Context, Result};
-use serde_json::json;
-use std::io::{self, Write};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::io::Read;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::interpreter::{LlmClient, Plan};
+use crate::resolve::operations::ALL as ALL_OPERATIONS;
 use crate::resolve::ResolveBridge;
 
-/// Provider info for the selection menu
-struct ProviderInfo {
-    id: &'static str,
-    label: &'static str,
-    description: &'static str,
+const OPS_SCHEMA: &str = include_str!("../../docs/ops.json");
+
+use super::{
+    BatchArgs, ClipCommands, Commands, MarkerCommands, MediaCommands, OpArgs, OpsCommands,
+    OpsSchemaArgs, OpsSchemaFormat, PageCommands, ProjectCommands, RenderCommands, TimecodeCommands,
+    TimelineCommands, TrackCommands,
+};
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BatchOperation {
+    op: String,
+    #[serde(default)]
+    params: Value,
 }
 
-const PROVIDERS: &[ProviderInfo] = &[
-    ProviderInfo {
-        id: "openai",
-        label: "OpenAI",
-        description: "GPT-4, GPT-4o",
-    },
-    ProviderInfo {
-        id: "anthropic",
-        label: "Anthropic",
-        description: "Claude",
-    },
-    ProviderInfo {
-        id: "openrouter",
-        label: "OpenRouter",
-        description: "Multiple models",
-    },
-    ProviderInfo {
-        id: "lmstudio",
-        label: "LM Studio",
-        description: "Local models",
-    },
-    ProviderInfo {
-        id: "custom",
-        label: "Custom",
-        description: "OpenAI-compatible API",
-    },
-];
+#[derive(Debug, Deserialize)]
+struct BatchWrapper {
+    operations: Vec<BatchOperation>,
+}
 
-/// Doctor command - check system status
+pub async fn dispatch(config: &Config, command: Commands, pretty: bool) -> Result<()> {
+    match command {
+        Commands::Doctor => doctor(config, pretty).await,
+        Commands::Status => status(config, pretty).await,
+        Commands::Ops { command } => ops(command, pretty),
+        Commands::Op(args) => op(config, &args, pretty).await,
+        Commands::Batch(args) => batch(config, &args, pretty).await,
+        Commands::Marker { command } => marker(config, command, pretty).await,
+        Commands::Track { command } => track(config, command, pretty).await,
+        Commands::Timeline { command } => timeline(config, command, pretty).await,
+        Commands::Media { command } => media(config, command, pretty).await,
+        Commands::Clip { command } => clip(config, command, pretty).await,
+        Commands::Render { command } => render(config, command, pretty).await,
+        Commands::Project { command } => project(config, command, pretty).await,
+        Commands::Page { command } => page(config, command, pretty).await,
+        Commands::Timecode { command } => timecode(config, command, pretty).await,
+    }
+}
+
+fn print_json<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{}", serde_json::to_string(value)?);
+    }
+    Ok(())
+}
+
+fn read_string_from_stdin() -> Result<String> {
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    Ok(input)
+}
+
+fn read_string_from_file(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path.display()))
+}
+
+fn parse_params(args: &OpArgs) -> Result<Value> {
+    let sources = [
+        args.params.is_some(),
+        args.params_file.is_some(),
+        args.params_stdin,
+    ];
+    if sources.iter().filter(|v| **v).count() > 1 {
+        anyhow::bail!("Use only one of --params, --params-file, or --params-stdin");
+    }
+
+    if let Some(params) = &args.params {
+        return Ok(serde_json::from_str(params)
+            .with_context(|| "Failed to parse --params JSON")?);
+    }
+
+    if let Some(path) = &args.params_file {
+        let input = read_string_from_file(path)?;
+        return Ok(serde_json::from_str(&input)
+            .with_context(|| "Failed to parse --params-file JSON")?);
+    }
+
+    if args.params_stdin {
+        let input = read_string_from_stdin()?;
+        return Ok(serde_json::from_str(&input)
+            .with_context(|| "Failed to parse JSON from stdin")?);
+    }
+
+    Ok(json!({}))
+}
+
+fn parse_batch_input(args: &BatchArgs) -> Result<Vec<BatchOperation>> {
+    if args.file.is_some() && args.stdin {
+        anyhow::bail!("Use only one of --file or --stdin");
+    }
+
+    let input = if let Some(path) = &args.file {
+        read_string_from_file(path)?
+    } else if args.stdin {
+        read_string_from_stdin()?
+    } else {
+        anyhow::bail!("Provide --file or --stdin for batch input");
+    };
+
+    let value: Value = serde_json::from_str(&input)
+        .with_context(|| "Failed to parse batch JSON")?;
+
+    if value.is_array() {
+        serde_json::from_value(value).with_context(|| "Failed to parse batch array")
+    } else if value.get("operations").is_some() {
+        let wrapper: BatchWrapper = serde_json::from_value(value)
+            .with_context(|| "Failed to parse batch wrapper")?;
+        Ok(wrapper.operations)
+    } else {
+        anyhow::bail!("Batch JSON must be an array or {{\"operations\": [...]}} object");
+    }
+}
+
+fn parse_property_value(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
+    }
+    if let Ok(int_val) = trimmed.parse::<i64>() {
+        return Value::Number(int_val.into());
+    }
+    if let Ok(float_val) = trimmed.parse::<f64>() {
+        if let Some(number) = serde_json::Number::from_f64(float_val) {
+            return Value::Number(number);
+        }
+    }
+    if trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.starts_with('"') {
+        if let Ok(parsed) = serde_json::from_str(trimmed) {
+            return parsed;
+        }
+    }
+    Value::String(trimmed.to_string())
+}
+
+fn parse_key_value_pairs(items: &[String]) -> Result<Value> {
+    let mut map = serde_json::Map::new();
+    for item in items {
+        let mut parts = item.splitn(2, '=');
+        let key = parts.next().unwrap_or("").trim();
+        let raw = parts.next().unwrap_or("").trim();
+        if key.is_empty() || raw.is_empty() {
+            anyhow::bail!("Invalid property format: {} (use KEY=VALUE)", item);
+        }
+        map.insert(key.to_string(), parse_property_value(raw));
+    }
+    Ok(Value::Object(map))
+}
+
+fn require_toggle(enable: bool, disable: bool, label: &str) -> Result<bool> {
+    match (enable, disable) {
+        (true, false) => Ok(true),
+        (false, true) => Ok(false),
+        _ => anyhow::bail!("Specify exactly one of --enable/--disable for {}", label),
+    }
+}
+
+fn require_link_toggle(link: bool, unlink: bool) -> Result<bool> {
+    match (link, unlink) {
+        (true, false) => Ok(true),
+        (false, true) => Ok(false),
+        _ => anyhow::bail!("Specify exactly one of --link/--unlink"),
+    }
+}
+
+fn require_single_selector(all: bool, index: bool, name: bool) -> Result<()> {
+    let mut count = 0;
+    if all {
+        count += 1;
+    }
+    if index {
+        count += 1;
+    }
+    if name {
+        count += 1;
+    }
+    if count != 1 {
+        anyhow::bail!("Specify exactly one of --all, --index, or --name");
+    }
+    Ok(())
+}
+
+fn build_clip_selector(track: i32, index: Option<i32>, name: Option<&str>, all: bool) -> Result<Value> {
+    let mut selector = serde_json::Map::new();
+    selector.insert("track".to_string(), json!(track));
+
+    require_single_selector(all, index.is_some(), name.is_some())?;
+
+    if all {
+        selector.insert("all".to_string(), json!(true));
+        return Ok(Value::Object(selector));
+    }
+
+    if let Some(idx) = index {
+        selector.insert("index".to_string(), json!(idx));
+        return Ok(Value::Object(selector));
+    }
+
+    if let Some(name) = name {
+        selector.insert("name".to_string(), json!(name));
+        return Ok(Value::Object(selector));
+    }
+
+    anyhow::bail!("Specify one of --all, --index, or --name")
+}
+
 pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     let bridge = ResolveBridge::new(config);
 
     let mut checks = vec![];
 
-    // Check Python
     let python_status = match bridge.check_python().await {
         Ok(version) => {
             json!({
@@ -69,7 +243,6 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     };
     checks.push(python_status);
 
-    // Check bridge script
     let script_status = if bridge.script_exists() {
         json!({
             "name": "bridge_script",
@@ -87,7 +260,6 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     };
     checks.push(script_status);
 
-    // Check Resolve connection
     let resolve_status = match bridge.check_connection().await {
         Ok(info) => {
             json!({
@@ -107,26 +279,6 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     };
     checks.push(resolve_status);
 
-    // Check API key
-    let api_status = match config.api_key() {
-        Ok(_) => {
-            json!({
-                "name": "api_key",
-                "status": "ok",
-                "message": format!("Configured for {}", config.llm.provider)
-            })
-        }
-        Err(e) => {
-            json!({
-                "name": "api_key",
-                "status": "warning",
-                "message": e.to_string()
-            })
-        }
-    };
-    checks.push(api_status);
-
-    // Check ffmpeg (optional, for beat detection)
     let ffmpeg_status = match std::process::Command::new("ffmpeg")
         .arg("-version")
         .output()
@@ -150,7 +302,6 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     };
     checks.push(ffmpeg_status);
 
-    // Output
     let result = json!({ "checks": checks });
 
     if pretty {
@@ -158,9 +309,9 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
         for check in checks {
             let status = check["status"].as_str().unwrap_or("unknown");
             let icon = match status {
-                "ok" => "\u{2714}",      // ✔
-                "warning" => "\u{26A0}", // ⚠
-                "error" => "\u{2718}",   // ✘
+                "ok" => "\u{2714}",
+                "warning" => "\u{26A0}",
+                "error" => "\u{2718}",
                 _ => "?",
             };
             println!(
@@ -174,13 +325,12 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
             }
         }
     } else {
-        println!("{}", serde_json::to_string(&result)?);
+        print_json(&result, false)?;
     }
 
     Ok(())
 }
 
-/// Status command - show current project/timeline
 pub async fn status(config: &Config, pretty: bool) -> Result<()> {
     let bridge = ResolveBridge::new(config);
 
@@ -243,186 +393,96 @@ pub async fn status(config: &Config, pretty: bool) -> Result<()> {
             );
         }
     } else {
-        println!("{}", serde_json::to_string(&context)?);
+        print_json(&context, false)?;
     }
 
     Ok(())
 }
 
-/// Plan command - generate execution plan from natural language
-pub async fn plan(config: &Config, request: &str, pretty: bool) -> Result<()> {
-    let bridge = ResolveBridge::new(config);
-
-    // Get current Resolve context
-    let context = bridge
-        .get_context()
-        .await
-        .context("Failed to get Resolve context. Is Resolve running?")?;
-
-    // Create LLM client
-    let client = LlmClient::new(config)?;
-
-    // Generate plan
-    let plan = client.generate_plan(&context, request).await?;
-
-    if pretty {
-        print_plan_pretty(&plan);
-    } else {
-        println!("{}", serde_json::to_string(&plan)?);
-    }
-
-    Ok(())
-}
-
-fn print_plan_pretty(plan: &Plan) {
-    if let Some(error) = &plan.error {
-        println!("Error: {}", error);
-        if let Some(suggestion) = &plan.suggestion {
-            println!("Suggestion: {}", suggestion);
+fn ops(command: OpsCommands, pretty: bool) -> Result<()> {
+    match command {
+        OpsCommands::List => {
+            if pretty {
+                println!("Supported Operations:\n");
+                for op in ALL_OPERATIONS {
+                    println!("- {}", op);
+                }
+            } else {
+                print_json(&json!({ "operations": ALL_OPERATIONS }), false)?;
+            }
+            Ok(())
         }
-        return;
-    }
-
-    println!("Execution Plan (v{})\n", plan.version);
-
-    if let Some(target) = &plan.target {
-        if let Some(project) = &target.project {
-            println!("Target Project: {}", project);
-        }
-        if let Some(timeline) = &target.timeline {
-            println!("Target Timeline: {}", timeline);
-        }
-        println!();
-    }
-
-    if !plan.preconditions.is_empty() {
-        println!("Preconditions:");
-        for pre in &plan.preconditions {
-            println!("  - {:?}", pre);
-        }
-        println!();
-    }
-
-    println!("Operations:");
-    for (i, op) in plan.operations.iter().enumerate() {
-        println!("  {}. {}", i + 1, op.op);
-        if !op.params.is_null() {
-            let params_str =
-                serde_json::to_string_pretty(&op.params).unwrap_or_else(|_| "{}".to_string());
-            for line in params_str.lines() {
-                println!("      {}", line);
+        OpsCommands::Schema(args) => {
+            let format = resolve_schema_format(&args, pretty);
+            match format {
+                OpsSchemaFormat::Raw => {
+                    print!("{}", OPS_SCHEMA);
+                    if !OPS_SCHEMA.ends_with('\n') {
+                        println!();
+                    }
+                    Ok(())
+                }
+                OpsSchemaFormat::Json => {
+                    let schema: Value = serde_json::from_str(OPS_SCHEMA)
+                        .with_context(|| "Failed to parse embedded ops schema")?;
+                    print_json(&schema, false)
+                }
+                OpsSchemaFormat::Pretty => {
+                    let schema: Value = serde_json::from_str(OPS_SCHEMA)
+                        .with_context(|| "Failed to parse embedded ops schema")?;
+                    print_json(&schema, true)
+                }
             }
         }
     }
 }
 
-/// Apply command - execute a plan
-pub async fn apply(
-    config: &Config,
-    request: Option<&str>,
-    plan_path: Option<&Path>,
-    yes: bool,
-    dry_run: bool,
-    pretty: bool,
-) -> Result<()> {
-    // Safety check
-    if !yes && !dry_run {
+fn resolve_schema_format(args: &OpsSchemaArgs, pretty: bool) -> OpsSchemaFormat {
+    args.format.clone().unwrap_or_else(|| {
         if pretty {
-            println!("Error: --yes flag required to execute changes");
-            println!("Use --dry-run to validate without executing");
+            OpsSchemaFormat::Pretty
         } else {
-            println!(
-                "{}",
-                json!({
-                    "error": "--yes flag required to execute changes"
-                })
-            );
+            OpsSchemaFormat::Json
+        }
+    })
+}
+
+async fn op(config: &Config, args: &OpArgs, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+    let params = parse_params(args)?;
+    let result = bridge.execute_operation(&args.op, params).await?;
+    print_json(&result, pretty)
+}
+
+async fn batch(config: &Config, args: &BatchArgs, pretty: bool) -> Result<()> {
+    let operations = parse_batch_input(args)?;
+
+    if args.dry_run {
+        if pretty {
+            println!("Batch valid: {} operations", operations.len());
+        } else {
+            print_json(&json!({ "valid": true, "count": operations.len() }), false)?;
         }
         return Ok(());
     }
 
     let bridge = ResolveBridge::new(config);
-
-    // Get the plan - either from file or generate from request
-    let plan: Plan = if let Some(path) = plan_path {
-        // Load plan from file
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read plan file: {:?}", path))?;
-        serde_json::from_str(&contents).with_context(|| "Failed to parse plan file")?
-    } else if let Some(req) = request {
-        // Generate plan from request
-        let context = bridge
-            .get_context()
-            .await
-            .context("Failed to get Resolve context")?;
-        let client = LlmClient::new(config)?;
-        client.generate_plan(&context, req).await?
-    } else {
-        anyhow::bail!("Either a request or --plan file must be provided");
-    };
-
-    // Check for error plan
-    if plan.is_error() {
-        if pretty {
-            println!("Cannot execute - plan contains error:");
-            println!("  {}", plan.error.as_deref().unwrap_or("Unknown error"));
-            if let Some(suggestion) = &plan.suggestion {
-                println!("  Suggestion: {}", suggestion);
-            }
-        } else {
-            println!("{}", serde_json::to_string(&plan)?);
-        }
-        return Ok(());
-    }
-
-    // Validate plan
-    plan.validate()
-        .map_err(|e| anyhow::anyhow!("Invalid plan: {}", e))?;
-
-    if dry_run {
-        if pretty {
-            println!("Dry run - plan is valid:\n");
-            print_plan_pretty(&plan);
-        } else {
-            println!(
-                "{}",
-                json!({
-                    "valid": true,
-                    "plan": plan
-                })
-            );
-        }
-        return Ok(());
-    }
-
-    // Execute operations
-    if pretty {
-        println!("Executing {} operations...\n", plan.operations.len());
-    }
-
     let mut results = vec![];
-    for (i, op) in plan.operations.iter().enumerate() {
-        if pretty {
-            print!("  {}. {}... ", i + 1, op.op);
-        }
 
+    for (index, op) in operations.iter().enumerate() {
         match bridge.execute_operation(&op.op, op.params.clone()).await {
             Ok(result) => {
-                if pretty {
-                    println!("OK");
-                }
                 results.push(json!({
-                    "op": op.op,
+                    "index": index,
+                    "op": op.op.clone(),
                     "status": "success",
                     "result": result
                 }));
             }
             Err(e) => {
-                if pretty {
-                    println!("FAILED: {}", e);
-                }
                 results.push(json!({
-                    "op": op.op,
+                    "index": index,
+                    "op": op.op.clone(),
                     "status": "error",
                     "error": e.to_string()
                 }));
@@ -430,188 +490,380 @@ pub async fn apply(
         }
     }
 
-    if pretty {
-        let success_count = results.iter().filter(|r| r["status"] == "success").count();
-        println!(
-            "\nCompleted: {}/{} operations succeeded",
-            success_count,
-            results.len()
-        );
-    } else {
-        println!(
-            "{}",
-            json!({
-                "executed": true,
-                "results": results
-            })
-        );
-    }
+    let output = json!({
+        "executed": true,
+        "results": results
+    });
 
-    Ok(())
+    print_json(&output, pretty)
 }
 
-/// Interactive provider selection
-pub fn select_provider(config: &mut Config) -> Result<()> {
-    println!("\n\u{1F527} Select AI Provider:\n");
+async fn marker(config: &Config, command: MarkerCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
 
-    for (i, p) in PROVIDERS.iter().enumerate() {
-        let current = if p.id == config.llm.provider {
-            " (current)"
-        } else {
-            ""
-        };
-        println!("  {}. {:12} - {}{}", i + 1, p.id, p.description, current);
+    match command {
+        MarkerCommands::Add(args) => {
+            let mut params = json!({
+                "frame": args.frame,
+                "color": args.color,
+            });
+            if args.relative {
+                params["relative"] = json!(true);
+            }
+            if let Some(name) = args.name {
+                params["name"] = json!(name);
+            }
+            if let Some(note) = args.note {
+                params["note"] = json!(note);
+            }
+            if let Some(duration) = args.duration {
+                params["duration"] = json!(duration);
+            }
+
+            let result = bridge.execute_operation("add_marker", params).await?;
+            print_json(&result, pretty)
+        }
+        MarkerCommands::Delete(args) => {
+            if args.frame.is_none() && args.color.is_none() {
+                anyhow::bail!("Specify --frame or --color for marker delete");
+            }
+            let mut params = json!({});
+            if let Some(frame) = args.frame {
+                params["frame"] = json!(frame);
+            }
+            if let Some(color) = args.color {
+                params["color"] = json!(color);
+            }
+            if args.relative {
+                params["relative"] = json!(true);
+            }
+            let result = bridge.execute_operation("delete_marker", params).await?;
+            print_json(&result, pretty)
+        }
     }
-
-    print!("\nEnter number (1-5) or 'q' to cancel: ");
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if input == "q" || input.is_empty() {
-        println!("Cancelled.");
-        return Ok(());
-    }
-
-    let choice: usize = input
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid selection: {}", input))?;
-
-    if choice < 1 || choice > PROVIDERS.len() {
-        return Err(anyhow::anyhow!(
-            "Invalid selection: {}. Please enter 1-{}",
-            choice,
-            PROVIDERS.len()
-        ));
-    }
-
-    let selected = &PROVIDERS[choice - 1];
-    config.set_provider(selected.id);
-
-    // Save config
-    config.write()?;
-
-    println!("\n\u{2714} Provider set to: {}", selected.label);
-    println!("\n\u{1F4DD} Configuration saved to:");
-    println!("   {}", Config::default_path().display());
-
-    // Check API key requirement
-    if !config.llm.requires_api_key() {
-        println!("\n\u{2714} {} doesn't require an API key.", selected.label);
-    } else if config.llm.api_key.is_none() {
-        let env_var = match selected.id {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "openrouter" => "OPENROUTER_API_KEY",
-            _ => "API_KEY",
-        };
-
-        println!(
-            "\n\u{26A0}\u{FE0F}  API key not configured for {}.",
-            selected.label
-        );
-        println!("\n\u{1F4DD} Add your API key to:");
-        println!("   {}", Config::default_path().display());
-        println!("\n   [llm]");
-        println!("   provider = \"{}\"", selected.id);
-        println!("   api_key = \"your-key-here\"");
-        println!("\nOr set environment variable:");
-        println!("   export {}=your-key-here", env_var);
-    } else {
-        println!("\n\u{2714} API key configured.");
-    }
-
-    Ok(())
 }
 
-/// List available models from the current provider
-pub async fn list_models(config: &Config, pretty: bool) -> Result<()> {
-    // Check API key (skip for lmstudio)
-    if config.llm.requires_api_key() {
-        if let Err(e) = config.api_key() {
-            if pretty {
-                eprintln!("\u{26A0}\u{FE0F}  {}", e);
-            } else {
-                println!(
-                    "{}",
-                    json!({
-                        "status": "error",
-                        "error": e.to_string(),
-                        "config_path": Config::default_path().to_string_lossy()
-                    })
-                );
-            }
-            return Ok(());
+async fn track(config: &Config, command: TrackCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        TrackCommands::Add(args) => {
+            let params = json!({ "type": args.track_type });
+            let result = bridge.execute_operation("add_track", params).await?;
+            print_json(&result, pretty)
+        }
+        TrackCommands::Delete(args) => {
+            let params = json!({ "type": args.track_type, "index": args.index });
+            let result = bridge.execute_operation("delete_track", params).await?;
+            print_json(&result, pretty)
+        }
+        TrackCommands::Name(args) => {
+            let params = json!({ "type": args.track_type, "index": args.index, "name": args.name });
+            let result = bridge.execute_operation("set_track_name", params).await?;
+            print_json(&result, pretty)
+        }
+        TrackCommands::Enable(args) => {
+            let enabled = require_toggle(args.enable, args.disable, "track")?;
+            let params = json!({
+                "type": args.track_type,
+                "index": args.index,
+                "enabled": enabled
+            });
+            let result = bridge.execute_operation("enable_track", params).await?;
+            print_json(&result, pretty)
+        }
+        TrackCommands::Lock(args) => {
+            let locked = require_toggle(args.lock, args.unlock, "track")?;
+            let params = json!({
+                "type": args.track_type,
+                "index": args.index,
+                "locked": locked
+            });
+            let result = bridge.execute_operation("lock_track", params).await?;
+            print_json(&result, pretty)
         }
     }
+}
 
-    let client = LlmClient::new_without_auth(config);
+async fn timeline(config: &Config, command: TimelineCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
 
-    if pretty {
-        println!(
-            "\u{1F4E1} Fetching models from {}...\n",
-            config.llm.base_url()
-        );
-    }
-
-    match client.fetch_available_models().await {
-        Ok(models) => {
-            if pretty {
-                if models.is_empty() {
-                    println!("\u{26A0}\u{FE0F}  No models found.");
-                    if config.llm.base_url().contains("localhost") {
-                        println!("\n\u{1F4A1} Troubleshooting:");
-                        println!("  - Make sure LM Studio is running");
-                        println!("  - Load a model in LM Studio");
-                        println!("  - Start the server: Server \u{2192} Start Server");
-                    }
-                } else {
-                    println!("\u{2714} Found {} model(s):\n", models.len());
-                    for (i, model) in models.iter().enumerate() {
-                        println!("  {}. {}", i + 1, model);
-                    }
-                }
-            } else {
-                println!(
-                    "{}",
-                    json!({
-                        "status": "success",
-                        "provider": config.llm.provider,
-                        "base_url": config.llm.base_url(),
-                        "models": models,
-                        "count": models.len()
-                    })
-                );
+    match command {
+        TimelineCommands::Set(args) => {
+            if args.name.is_some() && args.index.is_some() {
+                anyhow::bail!("Use only one of --name or --index");
             }
-            Ok(())
+            if args.name.is_none() && args.index.is_none() {
+                anyhow::bail!("Specify --name or --index");
+            }
+            let mut params = json!({});
+            if let Some(name) = args.name {
+                params["name"] = json!(name);
+            }
+            if let Some(index) = args.index {
+                params["index"] = json!(index);
+            }
+            let result = bridge.execute_operation("set_timeline", params).await?;
+            print_json(&result, pretty)
         }
-        Err(e) => {
-            if pretty {
-                eprintln!("\u{2718} Failed to fetch models: {}", e);
-                if config.llm.base_url().contains("localhost") {
-                    eprintln!("\n\u{1F4A1} Troubleshooting:");
-                    eprintln!("  - Make sure LM Studio is running");
-                    eprintln!(
-                        "  - Start the server: LM Studio \u{2192} Server \u{2192} Start Server"
-                    );
-                    eprintln!("  - Check URL matches: {}", config.llm.base_url());
-                } else {
-                    eprintln!("\n\u{1F4A1} Troubleshooting:");
-                    eprintln!("  - Check API key is valid");
-                    eprintln!("  - Check network connection");
-                }
-            } else {
-                println!(
-                    "{}",
-                    json!({
-                        "status": "error",
-                        "error": e.to_string()
-                    })
-                );
+        TimelineCommands::Duplicate(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge.execute_operation("duplicate_timeline", params).await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::Export(args) => {
+            let params = json!({
+                "path": args.path.to_string_lossy(),
+                "format": args.format
+            });
+            let result = bridge.execute_operation("export_timeline", params).await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::Import(args) => {
+            let mut params = json!({
+                "path": args.path.to_string_lossy()
+            });
+            if let Some(name) = args.name {
+                params["name"] = json!(name);
             }
-            Err(e)
+            if args.no_import_source_clips {
+                params["import_source_clips"] = json!(false);
+            }
+            let result = bridge.execute_operation("import_timeline_from_file", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn media(config: &Config, command: MediaCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        MediaCommands::Import(args) => {
+            let paths: Vec<String> = args
+                .paths
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            let params = json!({ "paths": paths });
+            let result = bridge.execute_operation("import_media", params).await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::Append(args) => {
+            let mut params = json!({ "clips": args.clips });
+            if let Some(track) = args.track {
+                params["track"] = json!(track);
+            }
+            let result = bridge.execute_operation("append_to_timeline", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn clip(config: &Config, command: ClipCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        ClipCommands::SetProperty(args) => {
+            let selector = build_clip_selector(
+                args.track,
+                args.index,
+                args.name.as_deref(),
+                args.all,
+            )?;
+            let properties = parse_key_value_pairs(&args.sets)?;
+            let params = json!({
+                "selector": selector,
+                "properties": properties
+            });
+            let result = bridge.execute_operation("set_clip_property", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Enable(args) => {
+            let enabled = require_toggle(args.enable, args.disable, "clip")?;
+            require_single_selector(args.all, args.index.is_some(), args.name.is_some())?;
+            let mut selector = json!({
+                "track": args.track,
+                "track_type": args.track_type,
+            });
+            if args.all {
+                selector["all"] = json!(true);
+            } else if let Some(index) = args.index {
+                selector["index"] = json!(index);
+            } else if let Some(name) = args.name {
+                selector["name"] = json!(name);
+            }
+            let params = json!({ "selector": selector, "enabled": enabled });
+            let result = bridge.execute_operation("set_clip_enabled", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Color(args) => {
+            if args.clear && args.color.is_some() {
+                anyhow::bail!("Use only one of --color or --clear");
+            }
+            if !args.clear && args.color.is_none() {
+                anyhow::bail!("Specify --color or --clear");
+            }
+            require_single_selector(args.all, args.index.is_some(), args.name.is_some())?;
+            let mut selector = json!({
+                "track": args.track,
+                "track_type": args.track_type,
+            });
+            if args.all {
+                selector["all"] = json!(true);
+            } else if let Some(index) = args.index {
+                selector["index"] = json!(index);
+            } else if let Some(name) = args.name {
+                selector["name"] = json!(name);
+            }
+            let mut params = json!({ "selector": selector });
+            if let Some(color) = args.color {
+                params["color"] = json!(color);
+            }
+            let result = bridge.execute_operation("set_clip_color", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Delete(args) => {
+            if args.all && !args.index.is_empty() {
+                anyhow::bail!("Use only one of --all or --index");
+            }
+            if !args.all && args.index.is_empty() {
+                anyhow::bail!("Specify --all or at least one --index");
+            }
+            let mut selector = json!({
+                "track": args.track,
+                "track_type": args.track_type,
+            });
+            if args.all {
+                selector["all"] = json!(true);
+            } else if args.index.len() == 1 {
+                selector["index"] = json!(args.index[0]);
+            } else {
+                selector["indices"] = json!(args.index);
+            }
+            let params = json!({ "selector": selector, "ripple": args.ripple });
+            let result = bridge.execute_operation("delete_clips", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Link(args) => {
+            let linked = require_link_toggle(args.link, args.unlink)?;
+            if args.indices.len() < 2 {
+                anyhow::bail!("Provide at least two --indices values to link/unlink");
+            }
+            let selector = json!({
+                "track": args.track,
+                "indices": args.indices
+            });
+            let params = json!({ "selector": selector, "linked": linked });
+            let result = bridge.execute_operation("set_clips_linked", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn render(config: &Config, command: RenderCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        RenderCommands::AddJob(args) => {
+            let mut params = json!({});
+            if let Some(format) = args.format {
+                params["format"] = json!(format);
+            }
+            if let Some(codec) = args.codec {
+                params["codec"] = json!(codec);
+            }
+            if let Some(path) = args.path {
+                params["path"] = json!(path.to_string_lossy());
+            }
+            if let Some(filename) = args.filename {
+                params["filename"] = json!(filename);
+            }
+            let result = bridge.execute_operation("add_render_job", params).await?;
+            print_json(&result, pretty)
+        }
+        RenderCommands::Start(args) => {
+            let mut params = json!({});
+            if args.no_wait {
+                params["wait"] = json!(false);
+            }
+            let result = bridge.execute_operation("start_render", params).await?;
+            print_json(&result, pretty)
+        }
+        RenderCommands::Formats => {
+            let result = bridge.execute_operation("get_render_formats", json!({})).await?;
+            print_json(&result, pretty)
+        }
+        RenderCommands::Codecs(args) => {
+            let params = json!({ "format": args.format });
+            let result = bridge.execute_operation("get_render_codecs", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn project(config: &Config, command: ProjectCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        ProjectCommands::Save => {
+            let result = bridge.execute_operation("save_project", json!({})).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Export(args) => {
+            let mut params = json!({ "path": args.path.to_string_lossy() });
+            if args.without_stills_and_luts {
+                params["with_stills_and_luts"] = json!(false);
+            }
+            let result = bridge.execute_operation("export_project", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::GetSetting(args) => {
+            let mut params = json!({});
+            if let Some(name) = args.name {
+                params["name"] = json!(name);
+            }
+            let result = bridge.execute_operation("get_project_setting", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::SetSetting(args) => {
+            let params = json!({ "name": args.name, "value": args.value });
+            let result = bridge.execute_operation("set_project_setting", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn page(config: &Config, command: PageCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        PageCommands::Get => {
+            let result = bridge.execute_operation("get_current_page", json!({})).await?;
+            print_json(&result, pretty)
+        }
+        PageCommands::Open(args) => {
+            let params = json!({ "page": args.page });
+            let result = bridge.execute_operation("open_page", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn timecode(config: &Config, command: TimecodeCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        TimecodeCommands::Get => {
+            let result = bridge
+                .execute_operation("get_current_timecode", json!({}))
+                .await?;
+            print_json(&result, pretty)
+        }
+        TimecodeCommands::Set(args) => {
+            let params = json!({ "timecode": args.timecode });
+            let result = bridge.execute_operation("set_current_timecode", params).await?;
+            print_json(&result, pretty)
         }
     }
 }

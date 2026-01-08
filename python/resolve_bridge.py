@@ -2975,6 +2975,315 @@ def op_refresh_lut_list(resolve, params):
 
 
 # =============================================================================
+# Beat Detection Operations
+# =============================================================================
+
+def ensure_audio_deps():
+    """Check and import audio dependencies.
+    
+    Checks for BeatNet (accurate neural network beat/downbeat detection).
+    Falls back to librosa if BeatNet not available.
+    Returns (BeatNet_class_or_None, librosa).
+    """
+    beatnet_class = None
+    librosa = None
+    
+    # Check for BeatNet (accurate downbeat detection)
+    try:
+        from BeatNet.BeatNet import BeatNet
+        beatnet_class = BeatNet
+    except ImportError:
+        print("BeatNet not installed. Will use librosa fallback (less accurate).", file=sys.stderr)
+        print("For accurate beat detection, install: pip install BeatNet", file=sys.stderr)
+    
+    # Check librosa (required for fallback and audio loading)
+    try:
+        import librosa
+    except ImportError:
+        raise RuntimeError(
+            "Missing required dependency: librosa\n\n"
+            "Please install dependencies:\n"
+            "  pip install librosa\n\n"
+            "For accurate beat detection (recommended):\n"
+            "  pip install 'numpy<2.0' cython\n"
+            "  pip install git+https://github.com/CPJKU/madmom.git\n"
+            "  pip install BeatNet librosa pyaudio\n\n"
+            "Then set python_path in ~/.config/magic-agent/config.toml:\n"
+            "  [resolve]\n"
+            "  python_path = \"~/.magic-agent-venv/bin/python\""
+        )
+    
+    return beatnet_class, librosa
+
+
+def get_clip_file_path(timeline_item):
+    """Get source file path from a timeline item."""
+    try:
+        media_pool_item = timeline_item.GetMediaPoolItem()
+        if not media_pool_item:
+            return None
+        return media_pool_item.GetClipProperty("File Path")
+    except Exception:
+        return None
+
+
+def get_clip_source_offset(timeline_item):
+    """Get the source in-point offset for a timeline item.
+    
+    Returns the frame offset into the source media where this clip starts.
+    This is needed to correctly map beat timestamps when a clip is trimmed.
+    """
+    try:
+        # GetLeftOffset returns how many frames from source start the clip begins
+        left_offset = timeline_item.GetLeftOffset()
+        return left_offset if left_offset else 0
+    except Exception:
+        return 0
+
+
+def op_detect_beats(resolve, params):
+    """Detect beats in audio and add markers to clips.
+    
+    Uses BeatNet (neural network) for accurate beat/downbeat detection.
+    Falls back to librosa if BeatNet is not installed.
+    
+    Adds markers directly to clips:
+    - Red markers: Downbeats (first beat of each bar)
+    - Blue markers: Regular beats (if enabled)
+    """
+    track = params.get("track", 1)
+    track_type = params.get("track_type", "audio")
+    mark_beats = params.get("mark_beats", False)  # Regular beats off by default
+    mark_downbeats = params.get("mark_downbeats", True)  # Bar starts (default)
+    
+    # Get project and timeline
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # Get timeline FPS
+    settings = timeline.GetSetting()
+    fps = float(settings.get("timelineFrameRate", 24))
+    
+    # Get clips on track
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items:
+        return error(f"No clips on {track_type} track {track}", "NO_CLIPS")
+    
+    # Check dependencies
+    try:
+        BeatNetClass, librosa = ensure_audio_deps()
+    except Exception as e:
+        return error(f"{e}", "DEPS_FAILED")
+    
+    markers_added = {"beats": 0, "downbeats": 0}
+    processed_clips = 0
+    skipped_clips = []
+    using_beatnet = BeatNetClass is not None
+    
+    for item in items:
+        clip_name = item.GetName()
+        file_path = get_clip_file_path(item)
+        
+        if not file_path:
+            skipped_clips.append({"name": clip_name, "reason": "no file path"})
+            continue
+        
+        if not os.path.exists(file_path):
+            skipped_clips.append({"name": clip_name, "reason": "file not found"})
+            continue
+        
+        # Get clip timing info
+        source_offset = get_clip_source_offset(item)  # Source frame offset (in-point)
+        clip_duration = item.GetDuration()  # Clip duration in frames
+        
+        # Calculate source in/out in seconds for analysis bounds
+        source_in_sec = source_offset / fps
+        source_out_sec = (source_offset + clip_duration) / fps
+        
+        try:
+            print(f"Analyzing audio: {clip_name}", file=sys.stderr)
+            
+            # Dictionary to collect markers by CLIP-RELATIVE frame
+            frame_markers = {}
+            
+            if using_beatnet:
+                # Use BeatNet for accurate beat/downbeat detection
+                print("Using BeatNet (neural network) for beat detection", file=sys.stderr)
+                estimator = BeatNetClass(
+                    1,  # Model number
+                    mode='offline',
+                    inference_model='DBN',
+                    plot=[]  # No plotting
+                )
+                
+                # BeatNet.process returns numpy array: [[time, beat_position], ...]
+                # beat_position: 1 = downbeat, 2/3/4 = other beats in bar
+                output = estimator.process(file_path)
+                
+                if output is not None and len(output) > 0:
+                    for beat_time, beat_pos in output:
+                        # Skip beats outside the clip's source range
+                        if beat_time < source_in_sec or beat_time > source_out_sec:
+                            continue
+                        
+                        # Calculate clip-relative frame (0-based from clip start)
+                        source_frame = beat_time * fps
+                        clip_frame = int(source_frame - source_offset)
+                        
+                        # Ensure frame is within clip bounds
+                        if clip_frame < 0 or clip_frame >= clip_duration:
+                            continue
+                        
+                        is_downbeat = (int(beat_pos) == 1)
+                        
+                        if is_downbeat and mark_downbeats:
+                            frame_markers[clip_frame] = {
+                                "color": "Red",
+                                "name": "Downbeat",
+                                "note": f"Bar start"
+                            }
+                            markers_added["downbeats"] += 1
+                        elif mark_beats and clip_frame not in frame_markers:
+                            frame_markers[clip_frame] = {
+                                "color": "Blue",
+                                "name": "Beat",
+                                "note": f"Beat {int(beat_pos)}"
+                            }
+                            markers_added["beats"] += 1
+            else:
+                # Fallback: Use librosa beat_track (less accurate)
+                print("Using librosa fallback (less accurate)", file=sys.stderr)
+                y, sr = librosa.load(file_path, sr=22050)
+                tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+                beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+                
+                for i, beat_time in enumerate(beat_times):
+                    # Skip beats outside the clip's source range
+                    if beat_time < source_in_sec or beat_time > source_out_sec:
+                        continue
+                    
+                    # Calculate clip-relative frame
+                    source_frame = beat_time * fps
+                    clip_frame = int(source_frame - source_offset)
+                    
+                    # Ensure frame is within clip bounds
+                    if clip_frame < 0 or clip_frame >= clip_duration:
+                        continue
+                    
+                    # Estimate downbeats (every 4 beats) - not accurate
+                    is_downbeat = (i % 4 == 0)
+                    
+                    if is_downbeat and mark_downbeats:
+                        frame_markers[clip_frame] = {
+                            "color": "Red",
+                            "name": "Downbeat",
+                            "note": "Bar start (estimated)"
+                        }
+                        markers_added["downbeats"] += 1
+                    elif mark_beats and clip_frame not in frame_markers:
+                        frame_markers[clip_frame] = {
+                            "color": "Blue",
+                            "name": "Beat",
+                            "note": f"Beat {(i % 4) + 1}"
+                        }
+                        markers_added["beats"] += 1
+            
+            # Add all markers to the CLIP
+            for frame, marker_info in frame_markers.items():
+                result = item.AddMarker(
+                    frame,
+                    marker_info["color"],
+                    marker_info["name"],
+                    marker_info["note"],
+                    1  # duration
+                )
+                if not result:
+                    print(f"Failed to add marker at frame {frame}", file=sys.stderr)
+            
+            processed_clips += 1
+            print(f"Added {len(frame_markers)} markers to {clip_name}", file=sys.stderr)
+            
+        except Exception as e:
+            skipped_clips.append({"name": clip_name, "reason": str(e)})
+            print(f"Failed to process {clip_name}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
+    total = markers_added["beats"] + markers_added["downbeats"]
+    
+    return success({
+        "markers_added": total,
+        "beats": markers_added["beats"],
+        "downbeats": markers_added["downbeats"],
+        "clips_processed": processed_clips,
+        "clips_skipped": skipped_clips if skipped_clips else None,
+        "engine": "BeatNet" if using_beatnet else "librosa"
+    })
+
+
+def op_check_audio_deps(resolve, params):
+    """Check if audio analysis dependencies are installed."""
+    deps = {
+        "beatnet": False,
+        "librosa": False,
+        "madmom": False,
+        "numpy": False,
+        "ffmpeg": False
+    }
+    
+    # Check Python packages
+    try:
+        from BeatNet.BeatNet import BeatNet
+        deps["beatnet"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import librosa
+        deps["librosa"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import madmom
+        deps["madmom"] = True
+    except ImportError:
+        pass
+    
+    try:
+        import numpy
+        deps["numpy"] = True
+    except ImportError:
+        pass
+    
+    # Check ffmpeg
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            deps["ffmpeg"] = True
+    except Exception:
+        pass
+    
+    all_installed = all(deps.values())
+    
+    return success({
+        "all_installed": all_installed,
+        "dependencies": deps
+    })
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -3060,6 +3369,8 @@ OPERATIONS = {
     
     # Audio
     "create_subtitles_from_audio": op_create_subtitles_from_audio,
+    "detect_beats": op_detect_beats,
+    "check_audio_deps": op_check_audio_deps,
     
     # Stills & Gallery
     "grab_still": op_grab_still,

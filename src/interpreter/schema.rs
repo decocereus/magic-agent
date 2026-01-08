@@ -141,6 +141,7 @@ impl Plan {
                 | "get_current_page"
                 // Audio
                 | "create_subtitles_from_audio"
+                | "detect_beats"
                 // Stills & Gallery
                 | "grab_still"
                 | "export_still"

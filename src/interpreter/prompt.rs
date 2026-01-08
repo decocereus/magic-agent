@@ -201,6 +201,17 @@ pub const SYSTEM_PROMPT: &str = r#"You are an assistant that converts natural la
 - `create_subtitles_from_audio`: Auto-generate subtitles from audio
   params: { language?: string }
 
+- `detect_beats`: Analyze audio and add markers at downbeats (first beat of each bar) using neural network
+  params: { track?: number, track_type?: "audio" | "video", mark_downbeats?: boolean, mark_beats?: boolean }
+  
+  Use this for: "add beat markers", "detect beats", "add markers at beats", "mark the beats", "beat detection"
+  
+  Defaults: track=1, track_type="audio", mark_downbeats=true, mark_beats=false
+  Marker colors: Red=downbeats (bar starts), Blue=all beats (if mark_beats=true)
+  Uses BeatNet neural network for accurate detection. Markers are added to clips.
+  
+  Example: User says "add beat markers on audio track 2" → { "op": "detect_beats", "params": { "track": 2, "track_type": "audio" } }
+
 ### Render (Basic)
 - `add_render_job`: Configure render job
   params: { format?: string, codec?: string, path?: string, filename?: string }

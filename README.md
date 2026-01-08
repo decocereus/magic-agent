@@ -39,6 +39,11 @@ The binary will be at `target/release/magic-agent`.
 cargo install --git https://github.com/decocereus/magic-agent.git
 ```
 
+### Install to Path
+```bash
+cargo install --path .
+```
+
 ## Configuration
 
 Create `~/.config/magic-agent/config.toml`:
@@ -276,6 +281,58 @@ magic-agent apply --plan plan.json --yes
 
 ### Audio
 - `create_subtitles_from_audio` - Auto-generate subtitles
+- `detect_beats` - Analyze audio and add markers at downbeats (bar starts)
+
+#### Beat Detection
+
+Automatically detect musical beats in audio and add clip markers for editing to music. Uses BeatNet neural network for accurate downbeat detection.
+
+**Requirements:**
+
+1. **Python 3.10** (recommended for compatibility):
+   ```bash
+   brew install python@3.10
+   ```
+
+2. **Create a virtual environment:**
+   ```bash
+   /opt/homebrew/opt/python@3.10/bin/python3.10 -m venv ~/.magic-agent-venv
+   source ~/.magic-agent-venv/bin/activate
+   ```
+
+3. **Install dependencies:**
+   ```bash
+   pip install --upgrade pip
+   pip install "numpy<2.0" cython setuptools wheel
+   pip install git+https://github.com/CPJKU/madmom.git
+   pip install BeatNet librosa pyaudio
+   ```
+
+4. **Configure magic-agent** to use the venv (in `~/.config/magic-agent/config.toml`):
+   ```toml
+   [resolve]
+   python_path = "~/.magic-agent-venv/bin/python"
+   ```
+
+**Marker Colors:**
+| Type | Color | Description |
+|------|-------|-------------|
+| Downbeat | Red | First beat of each bar |
+| Beat | Blue | Regular beats (if enabled) |
+
+**Examples:**
+```bash
+# Add downbeat markers on audio track 1
+magic-agent apply "add beat markers on audio track 1" --yes
+
+# Add markers on audio track 2
+magic-agent apply "add beat markers on audio track 2" --yes
+
+# Analyze video track with embedded audio
+magic-agent apply "detect beats on video track 1" --yes
+```
+
+**Note:** Without BeatNet installed, the tool falls back to librosa which provides less accurate beat detection.
 
 ## Limitations
 

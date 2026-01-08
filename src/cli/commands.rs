@@ -126,6 +126,30 @@ pub async fn doctor(config: &Config, pretty: bool) -> Result<()> {
     };
     checks.push(api_status);
 
+    // Check ffmpeg (optional, for beat detection)
+    let ffmpeg_status = match std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            let first_line = version.lines().next().unwrap_or("ffmpeg installed");
+            json!({
+                "name": "ffmpeg",
+                "status": "ok",
+                "message": first_line.chars().take(50).collect::<String>()
+            })
+        }
+        _ => {
+            json!({
+                "name": "ffmpeg",
+                "status": "warning",
+                "message": "Not found (optional, required for beat detection)"
+            })
+        }
+    };
+    checks.push(ffmpeg_status);
+
     // Output
     let result = json!({ "checks": checks });
 

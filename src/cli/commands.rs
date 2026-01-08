@@ -11,9 +11,10 @@ use crate::resolve::ResolveBridge;
 const OPS_SCHEMA: &str = include_str!("../../docs/ops.json");
 
 use super::{
-    BatchArgs, ClipCommands, Commands, MarkerCommands, MediaCommands, OpArgs, OpsCommands,
-    OpsSchemaArgs, OpsSchemaFormat, PageCommands, ProjectCommands, RenderCommands, TimecodeCommands,
-    TimelineCommands, TrackCommands,
+    BatchArgs, ClipCommands, Commands, GalleryCommands, LayoutCommands, MarkerCommands,
+    MediaCommands, NodeCommands, OpArgs, OpsCommands, OpsSchemaArgs, OpsSchemaFormat, PageCommands,
+    ProjectCommands, RenderCommands, StorageCommands, TimecodeCommands, TimelineCommands,
+    TrackCommands,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -44,6 +45,10 @@ pub async fn dispatch(config: &Config, command: Commands, pretty: bool) -> Resul
         Commands::Project { command } => project(config, command, pretty).await,
         Commands::Page { command } => page(config, command, pretty).await,
         Commands::Timecode { command } => timecode(config, command, pretty).await,
+        Commands::Storage { command } => storage(config, command, pretty).await,
+        Commands::Gallery { command } => gallery(config, command, pretty).await,
+        Commands::Node { command } => node(config, command, pretty).await,
+        Commands::Layout { command } => layout(config, command, pretty).await,
     }
 }
 
@@ -63,7 +68,8 @@ fn read_string_from_stdin() -> Result<String> {
 }
 
 fn read_string_from_file(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path.display()))
+    std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read file: {}", path.display()))
 }
 
 fn parse_params(args: &OpArgs) -> Result<Value> {
@@ -77,20 +83,19 @@ fn parse_params(args: &OpArgs) -> Result<Value> {
     }
 
     if let Some(params) = &args.params {
-        return Ok(serde_json::from_str(params)
-            .with_context(|| "Failed to parse --params JSON")?);
+        return Ok(serde_json::from_str(params).with_context(|| "Failed to parse --params JSON")?);
     }
 
     if let Some(path) = &args.params_file {
         let input = read_string_from_file(path)?;
-        return Ok(serde_json::from_str(&input)
-            .with_context(|| "Failed to parse --params-file JSON")?);
+        return Ok(
+            serde_json::from_str(&input).with_context(|| "Failed to parse --params-file JSON")?
+        );
     }
 
     if args.params_stdin {
         let input = read_string_from_stdin()?;
-        return Ok(serde_json::from_str(&input)
-            .with_context(|| "Failed to parse JSON from stdin")?);
+        return Ok(serde_json::from_str(&input).with_context(|| "Failed to parse JSON from stdin")?);
     }
 
     Ok(json!({}))
@@ -109,14 +114,14 @@ fn parse_batch_input(args: &BatchArgs) -> Result<Vec<BatchOperation>> {
         anyhow::bail!("Provide --file or --stdin for batch input");
     };
 
-    let value: Value = serde_json::from_str(&input)
-        .with_context(|| "Failed to parse batch JSON")?;
+    let value: Value =
+        serde_json::from_str(&input).with_context(|| "Failed to parse batch JSON")?;
 
     if value.is_array() {
         serde_json::from_value(value).with_context(|| "Failed to parse batch array")
     } else if value.get("operations").is_some() {
-        let wrapper: BatchWrapper = serde_json::from_value(value)
-            .with_context(|| "Failed to parse batch wrapper")?;
+        let wrapper: BatchWrapper =
+            serde_json::from_value(value).with_context(|| "Failed to parse batch wrapper")?;
         Ok(wrapper.operations)
     } else {
         anyhow::bail!("Batch JSON must be an array or {{\"operations\": [...]}} object");
@@ -194,7 +199,12 @@ fn require_single_selector(all: bool, index: bool, name: bool) -> Result<()> {
     Ok(())
 }
 
-fn build_clip_selector(track: i32, index: Option<i32>, name: Option<&str>, all: bool) -> Result<Value> {
+fn build_clip_selector(
+    track: i32,
+    index: Option<i32>,
+    name: Option<&str>,
+    all: bool,
+) -> Result<Value> {
     let mut selector = serde_json::Map::new();
     selector.insert("track".to_string(), json!(track));
 
@@ -608,7 +618,9 @@ async fn timeline(config: &Config, command: TimelineCommands, pretty: bool) -> R
         }
         TimelineCommands::Duplicate(args) => {
             let params = json!({ "name": args.name });
-            let result = bridge.execute_operation("duplicate_timeline", params).await?;
+            let result = bridge
+                .execute_operation("duplicate_timeline", params)
+                .await?;
             print_json(&result, pretty)
         }
         TimelineCommands::Export(args) => {
@@ -629,7 +641,34 @@ async fn timeline(config: &Config, command: TimelineCommands, pretty: bool) -> R
             if args.no_import_source_clips {
                 params["import_source_clips"] = json!(false);
             }
-            let result = bridge.execute_operation("import_timeline_from_file", params).await?;
+            let result = bridge
+                .execute_operation("import_timeline_from_file", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::Thumbnail(args) => {
+            let params = json!({ "path": args.path.to_string_lossy() });
+            let result = bridge
+                .execute_operation("get_current_clip_thumbnail", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::GrabAllStills => {
+            let result = bridge
+                .execute_operation("grab_all_stills", json!({}))
+                .await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::ConvertStereo => {
+            let result = bridge
+                .execute_operation("convert_timeline_to_stereo", json!({}))
+                .await?;
+            print_json(&result, pretty)
+        }
+        TimelineCommands::AnalyzeDolby => {
+            let result = bridge
+                .execute_operation("analyze_dolby_vision", json!({}))
+                .await?;
             print_json(&result, pretty)
         }
     }
@@ -654,7 +693,51 @@ async fn media(config: &Config, command: MediaCommands, pretty: bool) -> Result<
             if let Some(track) = args.track {
                 params["track"] = json!(track);
             }
-            let result = bridge.execute_operation("append_to_timeline", params).await?;
+            let result = bridge
+                .execute_operation("append_to_timeline", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::SyncAudio(args) => {
+            let params = json!({
+                "clips": args.clips,
+                "mode": args.mode
+            });
+            let result = bridge.execute_operation("auto_sync_audio", params).await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::MoveFolder(args) => {
+            let params = json!({
+                "folder": args.folder,
+                "dest": args.dest
+            });
+            let result = bridge.execute_operation("move_folder", params).await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::ExportMetadata(args) => {
+            let mut params = json!({
+                "path": args.path.to_string_lossy()
+            });
+            if !args.clips.is_empty() {
+                params["clips"] = json!(args.clips);
+            }
+            let result = bridge.execute_operation("export_metadata", params).await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::CreateStereo(args) => {
+            let params = json!({
+                "left": args.left,
+                "right": args.right
+            });
+            let result = bridge
+                .execute_operation("create_stereo_clip", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        MediaCommands::GetSelected => {
+            let result = bridge
+                .execute_operation("get_selected_clips", json!({}))
+                .await?;
             print_json(&result, pretty)
         }
     }
@@ -665,18 +748,16 @@ async fn clip(config: &Config, command: ClipCommands, pretty: bool) -> Result<()
 
     match command {
         ClipCommands::SetProperty(args) => {
-            let selector = build_clip_selector(
-                args.track,
-                args.index,
-                args.name.as_deref(),
-                args.all,
-            )?;
+            let selector =
+                build_clip_selector(args.track, args.index, args.name.as_deref(), args.all)?;
             let properties = parse_key_value_pairs(&args.sets)?;
             let params = json!({
                 "selector": selector,
                 "properties": properties
             });
-            let result = bridge.execute_operation("set_clip_property", params).await?;
+            let result = bridge
+                .execute_operation("set_clip_property", params)
+                .await?;
             print_json(&result, pretty)
         }
         ClipCommands::Enable(args) => {
@@ -758,6 +839,110 @@ async fn clip(config: &Config, command: ClipCommands, pretty: bool) -> Result<()
             let result = bridge.execute_operation("set_clips_linked", params).await?;
             print_json(&result, pretty)
         }
+        ClipCommands::LinkProxy(args) => {
+            let params = json!({
+                "clip": args.clip,
+                "proxy_path": args.proxy.to_string_lossy()
+            });
+            let result = bridge.execute_operation("link_proxy_media", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::UnlinkProxy(args) => {
+            let params = json!({ "clip": args.clip });
+            let result = bridge
+                .execute_operation("unlink_proxy_media", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Replace(args) => {
+            let params = json!({
+                "clip": args.clip,
+                "path": args.path.to_string_lossy()
+            });
+            let result = bridge.execute_operation("replace_clip", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::SetInOut(args) => {
+            let mut params = json!({ "clip": args.clip });
+            if let Some(in_point) = args.r#in {
+                params["in_point"] = json!(in_point);
+            }
+            if let Some(out_point) = args.out {
+                params["out_point"] = json!(out_point);
+            }
+            let result = bridge.execute_operation("set_clip_in_out", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::Transcribe(args) => {
+            let params = json!({ "clip": args.clip });
+            let result = bridge.execute_operation("transcribe_audio", params).await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::ImportFusion(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "path": args.path.to_string_lossy()
+            });
+            let result = bridge
+                .execute_operation("import_fusion_comp", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::ExportFusion(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "comp_index": args.comp_index,
+                "path": args.path.to_string_lossy()
+            });
+            let result = bridge
+                .execute_operation("export_fusion_comp", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::RenameFusion(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "comp_index": args.comp_index,
+                "name": args.name
+            });
+            let result = bridge
+                .execute_operation("rename_fusion_comp", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::ExportLut(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "lut_type": args.lut_type,
+                "path": args.path.to_string_lossy()
+            });
+            let result = bridge
+                .execute_operation("export_lut_from_clip", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::RegenerateMask(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index
+            });
+            let result = bridge
+                .execute_operation("regenerate_magic_mask", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ClipCommands::GetLinked(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index
+            });
+            let result = bridge.execute_operation("get_linked_items", params).await?;
+            print_json(&result, pretty)
+        }
     }
 }
 
@@ -791,12 +976,16 @@ async fn render(config: &Config, command: RenderCommands, pretty: bool) -> Resul
             print_json(&result, pretty)
         }
         RenderCommands::Formats => {
-            let result = bridge.execute_operation("get_render_formats", json!({})).await?;
+            let result = bridge
+                .execute_operation("get_render_formats", json!({}))
+                .await?;
             print_json(&result, pretty)
         }
         RenderCommands::Codecs(args) => {
             let params = json!({ "format": args.format });
-            let result = bridge.execute_operation("get_render_codecs", params).await?;
+            let result = bridge
+                .execute_operation("get_render_codecs", params)
+                .await?;
             print_json(&result, pretty)
         }
     }
@@ -823,12 +1012,53 @@ async fn project(config: &Config, command: ProjectCommands, pretty: bool) -> Res
             if let Some(name) = args.name {
                 params["name"] = json!(name);
             }
-            let result = bridge.execute_operation("get_project_setting", params).await?;
+            let result = bridge
+                .execute_operation("get_project_setting", params)
+                .await?;
             print_json(&result, pretty)
         }
         ProjectCommands::SetSetting(args) => {
             let params = json!({ "name": args.name, "value": args.value });
-            let result = bridge.execute_operation("set_project_setting", params).await?;
+            let result = bridge
+                .execute_operation("set_project_setting", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Create(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge.execute_operation("create_project", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Delete(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge.execute_operation("delete_project", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Archive(args) => {
+            let mut params = json!({
+                "name": args.name,
+                "path": args.path.to_string_lossy(),
+                "with_stills_and_luts": args.with_stills_and_luts
+            });
+            if let Some(filename) = args.filename {
+                params["filename"] = json!(filename);
+            }
+            let result = bridge.execute_operation("archive_project", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Load(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge.execute_operation("load_project", params).await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::List => {
+            let result = bridge
+                .execute_operation("get_project_list", json!({}))
+                .await?;
+            print_json(&result, pretty)
+        }
+        ProjectCommands::Close => {
+            let result = bridge.execute_operation("close_project", json!({})).await?;
             print_json(&result, pretty)
         }
     }
@@ -839,7 +1069,9 @@ async fn page(config: &Config, command: PageCommands, pretty: bool) -> Result<()
 
     match command {
         PageCommands::Get => {
-            let result = bridge.execute_operation("get_current_page", json!({})).await?;
+            let result = bridge
+                .execute_operation("get_current_page", json!({}))
+                .await?;
             print_json(&result, pretty)
         }
         PageCommands::Open(args) => {
@@ -862,7 +1094,209 @@ async fn timecode(config: &Config, command: TimecodeCommands, pretty: bool) -> R
         }
         TimecodeCommands::Set(args) => {
             let params = json!({ "timecode": args.timecode });
-            let result = bridge.execute_operation("set_current_timecode", params).await?;
+            let result = bridge
+                .execute_operation("set_current_timecode", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn storage(config: &Config, command: StorageCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        StorageCommands::Volumes => {
+            let result = bridge
+                .execute_operation("get_mounted_volumes", json!({}))
+                .await?;
+            print_json(&result, pretty)
+        }
+        StorageCommands::Browse(args) => {
+            let params = json!({ "path": args.path.to_string_lossy() });
+            let result = bridge
+                .execute_operation("get_subfolder_list", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        StorageCommands::Reveal(args) => {
+            let params = json!({ "path": args.path.to_string_lossy() });
+            let result = bridge
+                .execute_operation("reveal_in_storage", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        StorageCommands::AddMatte(args) => {
+            let params = json!({
+                "media_path": args.media_path.to_string_lossy(),
+                "matte_path": args.matte_path.to_string_lossy()
+            });
+            let result = bridge.execute_operation("add_clip_matte", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn gallery(config: &Config, command: GalleryCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        GalleryCommands::ListAlbums(args) => {
+            let params = json!({ "type": args.album_type });
+            let result = bridge
+                .execute_operation("get_gallery_albums", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::CreateAlbum(args) => {
+            let params = json!({
+                "name": args.name,
+                "type": args.album_type
+            });
+            let result = bridge
+                .execute_operation("create_gallery_album", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::DeleteAlbum(args) => {
+            let params = json!({
+                "name": args.name,
+                "type": args.album_type
+            });
+            let result = bridge
+                .execute_operation("delete_gallery_album", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::Import(args) => {
+            let paths: Vec<String> = args
+                .paths
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            let params = json!({
+                "album": args.album,
+                "paths": paths
+            });
+            let result = bridge.execute_operation("import_stills", params).await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::Export(args) => {
+            let mut params = json!({
+                "album": args.album,
+                "path": args.path.to_string_lossy()
+            });
+            if let Some(prefix) = args.prefix {
+                params["prefix"] = json!(prefix);
+            }
+            let result = bridge.execute_operation("export_stills", params).await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::GetLabel(args) => {
+            let params = json!({
+                "album": args.album,
+                "index": args.index
+            });
+            let result = bridge.execute_operation("get_still_label", params).await?;
+            print_json(&result, pretty)
+        }
+        GalleryCommands::SetLabel(args) => {
+            let params = json!({
+                "album": args.album,
+                "index": args.index,
+                "label": args.label
+            });
+            let result = bridge.execute_operation("set_still_label", params).await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn node(config: &Config, command: NodeCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        NodeCommands::Enable(args) => {
+            let enabled = require_toggle(args.enable, args.disable, "node")?;
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "node": args.node,
+                "enabled": enabled
+            });
+            let result = bridge.execute_operation("set_node_enabled", params).await?;
+            print_json(&result, pretty)
+        }
+        NodeCommands::GetTools(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index,
+                "node": args.node
+            });
+            let result = bridge
+                .execute_operation("get_tools_in_node", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        NodeCommands::ApplyArriCdl(args) => {
+            let params = json!({
+                "track": args.track,
+                "index": args.index
+            });
+            let result = bridge
+                .execute_operation("apply_arri_cdl_lut", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+    }
+}
+
+async fn layout(config: &Config, command: LayoutCommands, pretty: bool) -> Result<()> {
+    let bridge = ResolveBridge::new(config);
+
+    match command {
+        LayoutCommands::Save(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge
+                .execute_operation("save_layout_preset", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        LayoutCommands::Load(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge
+                .execute_operation("load_layout_preset", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        LayoutCommands::Export(args) => {
+            let params = json!({
+                "name": args.name,
+                "path": args.path.to_string_lossy()
+            });
+            let result = bridge
+                .execute_operation("export_layout_preset", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        LayoutCommands::Import(args) => {
+            let params = json!({ "path": args.path.to_string_lossy() });
+            let result = bridge
+                .execute_operation("import_layout_preset", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        LayoutCommands::Delete(args) => {
+            let params = json!({ "name": args.name });
+            let result = bridge
+                .execute_operation("delete_layout_preset", params)
+                .await?;
+            print_json(&result, pretty)
+        }
+        LayoutCommands::List => {
+            let result = bridge
+                .execute_operation("get_layout_presets", json!({}))
+                .await?;
             print_json(&result, pretty)
         }
     }

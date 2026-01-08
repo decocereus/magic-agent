@@ -183,6 +183,60 @@
       }
     },
     {
+      "name": "get_mounted_volumes",
+      "summary": "Get list of mounted storage volumes",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_subfolder_list",
+      "summary": "Get subfolders and files in a path",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to browse"
+          }
+        }
+      }
+    },
+    {
+      "name": "reveal_in_storage",
+      "summary": "Reveal file in Finder/Explorer",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to reveal"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_clip_matte",
+      "summary": "Add a clip matte to media",
+      "params": {
+        "type": "object",
+        "required": ["media_path", "matte_path"],
+        "properties": {
+          "media_path": {
+            "type": "string",
+            "description": "Path to the media file"
+          },
+          "matte_path": {
+            "type": "string",
+            "description": "Path to the matte file"
+          }
+        }
+      }
+    },
+    {
       "name": "import_media",
       "summary": "Import files into media pool",
       "params": {
@@ -239,6 +293,175 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      }
+    },
+    {
+      "name": "auto_sync_audio",
+      "summary": "Auto-sync audio to video clips",
+      "params": {
+        "type": "object",
+        "required": ["clips"],
+        "properties": {
+          "clips": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Clip names to sync (at least 2)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["waveform", "timecode", "append"],
+            "description": "Sync mode (default: waveform)"
+          }
+        }
+      }
+    },
+    {
+      "name": "move_folder",
+      "summary": "Move a folder within the media pool",
+      "params": {
+        "type": "object",
+        "required": ["folder"],
+        "properties": {
+          "folder": {
+            "type": "string",
+            "description": "Name of folder to move"
+          },
+          "dest": {
+            "type": "string",
+            "description": "Destination folder name (empty for root)"
+          }
+        }
+      }
+    },
+    {
+      "name": "export_metadata",
+      "summary": "Export clip metadata to CSV",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Output CSV file path"
+          },
+          "clips": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Clip names to export (all if not specified)"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_stereo_clip",
+      "summary": "Create a stereo clip from left/right clips",
+      "params": {
+        "type": "object",
+        "required": ["left", "right"],
+        "properties": {
+          "left": {
+            "type": "string",
+            "description": "Left eye clip name"
+          },
+          "right": {
+            "type": "string",
+            "description": "Right eye clip name"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_selected_clips",
+      "summary": "Get currently selected clips in media pool",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "link_proxy_media",
+      "summary": "Link proxy media to a media pool clip",
+      "params": {
+        "type": "object",
+        "required": ["clip", "proxy_path"],
+        "properties": {
+          "clip": {
+            "type": "string",
+            "description": "Media pool clip name"
+          },
+          "proxy_path": {
+            "type": "string",
+            "description": "Path to proxy media file"
+          }
+        }
+      }
+    },
+    {
+      "name": "unlink_proxy_media",
+      "summary": "Unlink proxy media from a media pool clip",
+      "params": {
+        "type": "object",
+        "required": ["clip"],
+        "properties": {
+          "clip": {
+            "type": "string",
+            "description": "Media pool clip name"
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_clip",
+      "summary": "Replace a media pool clip with a new file",
+      "params": {
+        "type": "object",
+        "required": ["clip", "path"],
+        "properties": {
+          "clip": {
+            "type": "string",
+            "description": "Media pool clip name to replace"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to new media file"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clip_in_out",
+      "summary": "Set in/out points on a media pool clip",
+      "params": {
+        "type": "object",
+        "required": ["clip"],
+        "properties": {
+          "clip": {
+            "type": "string",
+            "description": "Media pool clip name"
+          },
+          "in_point": {
+            "type": "integer",
+            "description": "In point frame"
+          },
+          "out_point": {
+            "type": "integer",
+            "description": "Out point frame"
+          }
+        }
+      }
+    },
+    {
+      "name": "transcribe_audio",
+      "summary": "Transcribe audio from a media pool clip",
+      "params": {
+        "type": "object",
+        "required": ["clip"],
+        "properties": {
+          "clip": {
+            "type": "string",
+            "description": "Media pool clip name"
           }
         }
       }
@@ -780,6 +1003,44 @@
       }
     },
     {
+      "name": "get_current_clip_thumbnail",
+      "summary": "Get thumbnail image of current clip at playhead",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Output path for thumbnail image"
+          }
+        }
+      }
+    },
+    {
+      "name": "grab_all_stills",
+      "summary": "Grab stills from all clips on timeline",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "convert_timeline_to_stereo",
+      "summary": "Convert timeline to stereo 3D",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "analyze_dolby_vision",
+      "summary": "Analyze Dolby Vision metadata on timeline",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "insert_fusion_composition",
       "summary": "Insert Fusion composition",
       "params": {
@@ -844,6 +1105,85 @@
           "name": {
             "type": "string"
           }
+        }
+      }
+    },
+    {
+      "name": "import_fusion_comp",
+      "summary": "Import Fusion composition to timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "path"],
+        "properties": {
+          "track": {"type": "integer", "description": "Track index (1-based)"},
+          "index": {"type": "integer", "description": "Clip index (0-based)"},
+          "path": {"type": "string", "description": "Path to Fusion composition file"}
+        }
+      }
+    },
+    {
+      "name": "export_fusion_comp",
+      "summary": "Export Fusion composition from timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "path"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"},
+          "comp_index": {"type": "integer", "description": "Fusion comp index (1-based)"},
+          "path": {"type": "string", "description": "Output path"}
+        }
+      }
+    },
+    {
+      "name": "rename_fusion_comp",
+      "summary": "Rename Fusion composition on timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "name"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"},
+          "comp_index": {"type": "integer"},
+          "name": {"type": "string", "description": "New name for composition"}
+        }
+      }
+    },
+    {
+      "name": "export_lut_from_clip",
+      "summary": "Export LUT from timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "path"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"},
+          "lut_type": {"type": "integer", "description": "LUT type (e.g., 65 for 65-point 3D)"},
+          "path": {"type": "string", "description": "Output path for LUT file"}
+        }
+      }
+    },
+    {
+      "name": "regenerate_magic_mask",
+      "summary": "Regenerate Magic Mask on timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"}
+        }
+      }
+    },
+    {
+      "name": "get_linked_items",
+      "summary": "Get linked items for a timeline item",
+      "params": {
+        "type": "object",
+        "required": ["track", "index"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"}
         }
       }
     },
@@ -1283,6 +1623,183 @@
             ]
           }
         }
+      }
+    },
+    {
+      "name": "create_gallery_album",
+      "summary": "Create a new gallery album",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "description": "Album name"},
+          "type": {"type": "string", "enum": ["stills", "powergrade"]}
+        }
+      }
+    },
+    {
+      "name": "delete_gallery_album",
+      "summary": "Delete a gallery album",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "description": "Album name"},
+          "type": {"type": "string", "enum": ["stills", "powergrade"]}
+        }
+      }
+    },
+    {
+      "name": "import_stills",
+      "summary": "Import stills into a gallery album",
+      "params": {
+        "type": "object",
+        "required": ["album", "paths"],
+        "properties": {
+          "album": {"type": "string", "description": "Album name"},
+          "paths": {"type": "array", "items": {"type": "string"}, "description": "Paths to still files"}
+        }
+      }
+    },
+    {
+      "name": "export_stills",
+      "summary": "Export stills from a gallery album",
+      "params": {
+        "type": "object",
+        "required": ["album", "path"],
+        "properties": {
+          "album": {"type": "string", "description": "Album name"},
+          "path": {"type": "string", "description": "Output directory"},
+          "prefix": {"type": "string", "description": "Filename prefix"}
+        }
+      }
+    },
+    {
+      "name": "get_still_label",
+      "summary": "Get label for a still in an album",
+      "params": {
+        "type": "object",
+        "required": ["album", "index"],
+        "properties": {
+          "album": {"type": "string"},
+          "index": {"type": "integer", "description": "Still index (0-based)"}
+        }
+      }
+    },
+    {
+      "name": "set_still_label",
+      "summary": "Set label for a still in an album",
+      "params": {
+        "type": "object",
+        "required": ["album", "index", "label"],
+        "properties": {
+          "album": {"type": "string"},
+          "index": {"type": "integer"},
+          "label": {"type": "string", "description": "Label text"}
+        }
+      }
+    },
+    {
+      "name": "set_node_enabled",
+      "summary": "Enable or disable a color node",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "node", "enabled"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"},
+          "node": {"type": "integer", "description": "Node index (1-based)"},
+          "enabled": {"type": "boolean"}
+        }
+      }
+    },
+    {
+      "name": "get_tools_in_node",
+      "summary": "Get tools in a color node",
+      "params": {
+        "type": "object",
+        "required": ["track", "index", "node"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"},
+          "node": {"type": "integer"}
+        }
+      }
+    },
+    {
+      "name": "apply_arri_cdl_lut",
+      "summary": "Apply ARRI CDL LUT to clip",
+      "params": {
+        "type": "object",
+        "required": ["track", "index"],
+        "properties": {
+          "track": {"type": "integer"},
+          "index": {"type": "integer"}
+        }
+      }
+    },
+    {
+      "name": "save_layout_preset",
+      "summary": "Save current UI layout as preset",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "description": "Preset name"}
+        }
+      }
+    },
+    {
+      "name": "load_layout_preset",
+      "summary": "Load a UI layout preset",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "export_layout_preset",
+      "summary": "Export UI layout preset to file",
+      "params": {
+        "type": "object",
+        "required": ["name", "path"],
+        "properties": {
+          "name": {"type": "string"},
+          "path": {"type": "string", "description": "Output file path"}
+        }
+      }
+    },
+    {
+      "name": "import_layout_preset",
+      "summary": "Import UI layout preset from file",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {"type": "string", "description": "Preset file path"}
+        }
+      }
+    },
+    {
+      "name": "delete_layout_preset",
+      "summary": "Delete a UI layout preset",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "get_layout_presets",
+      "summary": "Get list of UI layout presets",
+      "params": {
+        "type": "object",
+        "properties": {}
       }
     },
     {
@@ -1952,6 +2469,86 @@
             "type": "string"
           }
         }
+      }
+    },
+    {
+      "name": "create_project",
+      "summary": "Create a new project",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name for the new project"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_project",
+      "summary": "Delete a project (cannot delete currently open project)",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the project to delete"
+          }
+        }
+      }
+    },
+    {
+      "name": "archive_project",
+      "summary": "Archive a project to .dra file",
+      "params": {
+        "type": "object",
+        "required": ["name", "path"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the project to archive"
+          },
+          "path": {
+            "type": "string",
+            "description": "Output directory path for the archive"
+          },
+          "with_stills_and_luts": {
+            "type": "boolean",
+            "description": "Include stills and LUTs in archive"
+          }
+        }
+      }
+    },
+    {
+      "name": "load_project",
+      "summary": "Load/open a project by name",
+      "params": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the project to load"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_project_list",
+      "summary": "List all projects in current folder",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "close_project",
+      "summary": "Close the current project",
+      "params": {
+        "type": "object",
+        "properties": {}
       }
     },
     {

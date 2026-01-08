@@ -202,6 +202,86 @@ def get_media_pool_context(media_pool):
 
 
 # =============================================================================
+# Media Storage Operations
+# =============================================================================
+
+def op_get_mounted_volumes(resolve, params):
+    """Get list of mounted storage volumes."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    ms = resolve.GetMediaStorage()
+    if not ms:
+        return error("Could not get media storage", "NO_MEDIA_STORAGE")
+    
+    volumes = ms.GetMountedVolumeList()
+    return success({"volumes": volumes or []})
+
+
+def op_get_subfolder_list(resolve, params):
+    """Get subfolders in a path."""
+    path = params.get("path", "")
+    if not path:
+        return error("Path is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    ms = resolve.GetMediaStorage()
+    if not ms:
+        return error("Could not get media storage", "NO_MEDIA_STORAGE")
+    
+    subfolders = ms.GetSubFolderList(path)
+    files = ms.GetFileList(path)
+    
+    return success({
+        "path": path,
+        "subfolders": subfolders or [],
+        "files": files or []
+    })
+
+
+def op_reveal_in_storage(resolve, params):
+    """Reveal a file in Finder/Explorer."""
+    path = params.get("path", "")
+    if not path:
+        return error("Path is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    ms = resolve.GetMediaStorage()
+    if not ms:
+        return error("Could not get media storage", "NO_MEDIA_STORAGE")
+    
+    result = ms.RevealInStorage(path)
+    if result:
+        return success({"revealed": True, "path": path})
+    return error(f"Failed to reveal: {path}")
+
+
+def op_add_clip_matte(resolve, params):
+    """Add a clip matte to media."""
+    media_path = params.get("media_path", "")
+    matte_path = params.get("matte_path", "")
+    
+    if not media_path or not matte_path:
+        return error("Both media_path and matte_path are required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    ms = resolve.GetMediaStorage()
+    if not ms:
+        return error("Could not get media storage", "NO_MEDIA_STORAGE")
+    
+    result = ms.AddClipMatte(media_path, matte_path)
+    if result:
+        return success({"matte_added": True, "media_path": media_path, "matte_path": matte_path})
+    return error(f"Failed to add clip matte")
+
+
+# =============================================================================
 # Media Operations
 # =============================================================================
 
@@ -326,6 +406,335 @@ def op_create_timeline(resolve, params):
     if timeline:
         return success({"timeline": timeline.GetName()})
     return error("Failed to create timeline")
+
+
+def op_auto_sync_audio(resolve, params):
+    """Auto-sync audio to video clips."""
+    clip_names = params.get("clips", [])
+    mode = params.get("mode", "waveform")  # waveform, timecode, append
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    # Find clips by name
+    clips = []
+    for cname in clip_names:
+        for clip in root.GetClipList() or []:
+            if clip.GetName() == cname:
+                clips.append(clip)
+                break
+    
+    if len(clips) < 2:
+        return error("Need at least 2 clips for audio sync", "INVALID_PARAM")
+    
+    # Map mode to sync mode constant
+    # 0 = based on timecode, 1 = based on waveform, 2 = append
+    mode_map = {
+        "timecode": 0,
+        "waveform": 1,
+        "append": 2
+    }
+    sync_mode = mode_map.get(mode.lower(), 1)
+    
+    result = media_pool.AutoSyncAudio(clips, sync_mode)
+    if result:
+        return success({"synced": True, "clip_count": len(clips), "mode": mode})
+    return error("Failed to auto-sync audio")
+
+
+def op_move_folder(resolve, params):
+    """Move a folder within the media pool."""
+    folder_name = params.get("folder", "")
+    dest_name = params.get("dest", "")
+    
+    if not folder_name:
+        return error("Folder name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    # Find source folder
+    source_folder = None
+    dest_folder = None
+    
+    def find_folder(parent, name):
+        for folder in parent.GetSubFolderList() or []:
+            if folder.GetName() == name:
+                return folder
+            found = find_folder(folder, name)
+            if found:
+                return found
+        return None
+    
+    source_folder = find_folder(root, folder_name)
+    if not source_folder:
+        return error(f"Folder not found: {folder_name}", "FOLDER_NOT_FOUND")
+    
+    # Find destination folder (or root if empty/not found)
+    if dest_name:
+        dest_folder = find_folder(root, dest_name)
+        if not dest_folder:
+            return error(f"Destination folder not found: {dest_name}", "FOLDER_NOT_FOUND")
+    else:
+        dest_folder = root
+    
+    result = media_pool.MoveFolder(source_folder, dest_folder)
+    if result:
+        return success({"moved": True, "folder": folder_name, "destination": dest_name or "root"})
+    return error(f"Failed to move folder: {folder_name}")
+
+
+def op_export_metadata(resolve, params):
+    """Export clip metadata to CSV."""
+    file_path = params.get("path", "")
+    clip_names = params.get("clips", [])
+    
+    if not file_path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    # Get clips to export
+    clips = []
+    if clip_names:
+        for cname in clip_names:
+            for clip in root.GetClipList() or []:
+                if clip.GetName() == cname:
+                    clips.append(clip)
+                    break
+    else:
+        # Export all clips in root
+        clips = list(root.GetClipList() or [])
+    
+    if not clips:
+        return error("No clips found", "NO_CLIPS")
+    
+    result = media_pool.ExportMetadata(file_path, clips)
+    if result:
+        return success({"exported": True, "path": file_path, "clip_count": len(clips)})
+    return error(f"Failed to export metadata to: {file_path}")
+
+
+def op_create_stereo_clip(resolve, params):
+    """Create a stereo clip from left and right eye clips."""
+    left_name = params.get("left", "")
+    right_name = params.get("right", "")
+    
+    if not left_name or not right_name:
+        return error("Both left and right clip names are required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    root = media_pool.GetRootFolder()
+    
+    left_clip = None
+    right_clip = None
+    
+    for clip in root.GetClipList() or []:
+        name = clip.GetName()
+        if name == left_name:
+            left_clip = clip
+        elif name == right_name:
+            right_clip = clip
+    
+    if not left_clip:
+        return error(f"Left clip not found: {left_name}", "CLIP_NOT_FOUND")
+    if not right_clip:
+        return error(f"Right clip not found: {right_name}", "CLIP_NOT_FOUND")
+    
+    result = media_pool.CreateStereoClip(left_clip, right_clip)
+    if result:
+        return success({"created": True, "stereo_clip": result.GetName() if result else "Stereo Clip"})
+    return error("Failed to create stereo clip")
+
+
+def op_get_selected_clips(resolve, params):
+    """Get currently selected clips in media pool."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    selected = media_pool.GetSelectedClips()
+    
+    clip_info = []
+    if selected:
+        for clip in selected:
+            clip_info.append({
+                "name": clip.GetName(),
+                "clip_property": clip.GetClipProperty() or {}
+            })
+    
+    return success({"selected": clip_info, "count": len(clip_info)})
+
+
+# =============================================================================
+# MediaPoolItem Operations
+# =============================================================================
+
+def find_media_pool_clip(media_pool, clip_name):
+    """Find a clip in the media pool by name."""
+    root = media_pool.GetRootFolder()
+    
+    def search_folder(folder):
+        for clip in folder.GetClipList() or []:
+            if clip.GetName() == clip_name:
+                return clip
+        for subfolder in folder.GetSubFolderList() or []:
+            found = search_folder(subfolder)
+            if found:
+                return found
+        return None
+    
+    return search_folder(root)
+
+
+def op_link_proxy_media(resolve, params):
+    """Link proxy media to a media pool clip."""
+    clip_name = params.get("clip", "")
+    proxy_path = params.get("proxy_path", "")
+    
+    if not clip_name:
+        return error("Clip name is required", "INVALID_PARAM")
+    if not proxy_path:
+        return error("Proxy path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    clip = find_media_pool_clip(media_pool, clip_name)
+    
+    if not clip:
+        return error(f"Clip not found: {clip_name}", "CLIP_NOT_FOUND")
+    
+    result = clip.LinkProxyMedia(proxy_path)
+    if result:
+        return success({"linked": True, "clip": clip_name, "proxy": proxy_path})
+    return error(f"Failed to link proxy media to: {clip_name}")
+
+
+def op_unlink_proxy_media(resolve, params):
+    """Unlink proxy media from a media pool clip."""
+    clip_name = params.get("clip", "")
+    
+    if not clip_name:
+        return error("Clip name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    clip = find_media_pool_clip(media_pool, clip_name)
+    
+    if not clip:
+        return error(f"Clip not found: {clip_name}", "CLIP_NOT_FOUND")
+    
+    result = clip.UnlinkProxyMedia()
+    if result:
+        return success({"unlinked": True, "clip": clip_name})
+    return error(f"Failed to unlink proxy media from: {clip_name}")
+
+
+def op_replace_clip(resolve, params):
+    """Replace a media pool clip with a new file."""
+    clip_name = params.get("clip", "")
+    new_path = params.get("path", "")
+    
+    if not clip_name:
+        return error("Clip name is required", "INVALID_PARAM")
+    if not new_path:
+        return error("New file path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    clip = find_media_pool_clip(media_pool, clip_name)
+    
+    if not clip:
+        return error(f"Clip not found: {clip_name}", "CLIP_NOT_FOUND")
+    
+    result = clip.ReplaceClip(new_path)
+    if result:
+        return success({"replaced": True, "clip": clip_name, "new_path": new_path})
+    return error(f"Failed to replace clip: {clip_name}")
+
+
+def op_set_clip_in_out(resolve, params):
+    """Set in/out points on a media pool clip."""
+    clip_name = params.get("clip", "")
+    in_point = params.get("in_point")
+    out_point = params.get("out_point")
+    
+    if not clip_name:
+        return error("Clip name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    clip = find_media_pool_clip(media_pool, clip_name)
+    
+    if not clip:
+        return error(f"Clip not found: {clip_name}", "CLIP_NOT_FOUND")
+    
+    result = True
+    if in_point is not None:
+        result = result and clip.SetClipProperty("In", in_point)
+    if out_point is not None:
+        result = result and clip.SetClipProperty("Out", out_point)
+    
+    if result:
+        return success({
+            "clip": clip_name,
+            "in_point": in_point,
+            "out_point": out_point
+        })
+    return error(f"Failed to set in/out points for: {clip_name}")
+
+
+def op_transcribe_audio(resolve, params):
+    """Transcribe audio from a media pool clip."""
+    clip_name = params.get("clip", "")
+    
+    if not clip_name:
+        return error("Clip name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    media_pool = project.GetMediaPool()
+    clip = find_media_pool_clip(media_pool, clip_name)
+    
+    if not clip:
+        return error(f"Clip not found: {clip_name}", "CLIP_NOT_FOUND")
+    
+    result = clip.TranscribeAudio()
+    if result:
+        return success({"transcribed": True, "clip": clip_name})
+    return error(f"Failed to transcribe audio for: {clip_name}")
 
 
 # =============================================================================
@@ -789,6 +1198,99 @@ def op_export_timeline(resolve, params):
     return error(f"Failed to export timeline to {path}")
 
 
+def op_get_current_clip_thumbnail(resolve, params):
+    """Get thumbnail image of current clip at playhead."""
+    output_path = params.get("path", "")
+    
+    if not output_path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    # GetCurrentClipThumbnailImage returns a dict with width, height, format, data
+    thumb_data = timeline.GetCurrentClipThumbnailImage()
+    if not thumb_data:
+        return error("Failed to get thumbnail data")
+    
+    # Write thumbnail to file
+    try:
+        width = thumb_data.get("width", 0)
+        height = thumb_data.get("height", 0)
+        data = thumb_data.get("data", "")
+        
+        if not data:
+            return error("No thumbnail data available")
+        
+        # Data is base64 encoded, decode and write
+        import base64
+        image_data = base64.b64decode(data)
+        
+        with open(output_path, "wb") as f:
+            f.write(image_data)
+        
+        return success({
+            "path": output_path,
+            "width": width,
+            "height": height
+        })
+    except Exception as e:
+        return error(f"Failed to write thumbnail: {e}")
+
+
+def op_grab_all_stills(resolve, params):
+    """Grab stills from all clips on timeline."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.GrabAllStills(1)  # 1 = still per clip
+    if result:
+        return success({"grabbed": True, "count": len(result) if result else 0})
+    return error("Failed to grab all stills")
+
+
+def op_convert_timeline_to_stereo(resolve, params):
+    """Convert timeline to stereo 3D."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.ConvertTimelineToStereo()
+    if result:
+        return success({"converted": True})
+    return error("Failed to convert timeline to stereo")
+
+
+def op_analyze_dolby_vision(resolve, params):
+    """Analyze Dolby Vision metadata on timeline."""
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    result = timeline.AnalyzeDolbyVision()
+    if result:
+        return success({"analyzed": True})
+    return error("Failed to analyze Dolby Vision")
+
+
 # =============================================================================
 # Fusion & Composition Operations
 # =============================================================================
@@ -913,6 +1415,179 @@ def op_create_compound_clip(resolve, params):
     if result:
         return success({"timeline_item": result.GetName() if result else name})
     return error("Failed to create compound clip")
+
+
+def get_timeline_item(timeline, track, index, track_type="video"):
+    """Helper to get a timeline item by track and index."""
+    items = timeline.GetItemListInTrack(track_type, track)
+    if not items or index >= len(items):
+        return None
+    return items[index]
+
+
+def op_import_fusion_comp(resolve, params):
+    """Import Fusion composition to timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    path = params.get("path", "")
+    
+    if not path:
+        return error("Composition path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    result = item.ImportFusionComp(path)
+    if result:
+        return success({"imported": True, "path": path})
+    return error(f"Failed to import Fusion composition")
+
+
+def op_export_fusion_comp(resolve, params):
+    """Export Fusion composition from timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    path = params.get("path", "")
+    
+    if not path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    result = item.ExportFusionComp(path, comp_index)
+    if result:
+        return success({"exported": True, "path": path, "comp_index": comp_index})
+    return error(f"Failed to export Fusion composition")
+
+
+def op_rename_fusion_comp(resolve, params):
+    """Rename Fusion composition on timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    comp_index = params.get("comp_index", 1)
+    name = params.get("name", "")
+    
+    if not name:
+        return error("New name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    result = item.RenameFusionCompByIndex(comp_index, name)
+    if result:
+        return success({"renamed": True, "comp_index": comp_index, "name": name})
+    return error(f"Failed to rename Fusion composition")
+
+
+def op_export_lut_from_clip(resolve, params):
+    """Export LUT from timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    lut_type = params.get("lut_type", 65)  # 65-point 3D LUT
+    path = params.get("path", "")
+    
+    if not path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    result = item.ExportLUT(lut_type, path)
+    if result:
+        return success({"exported": True, "path": path, "lut_type": lut_type})
+    return error(f"Failed to export LUT")
+
+
+def op_regenerate_magic_mask(resolve, params):
+    """Regenerate Magic Mask on timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    result = item.RegenerateMagicMask()
+    if result:
+        return success({"regenerated": True})
+    return error(f"Failed to regenerate Magic Mask")
+
+
+def op_get_linked_items(resolve, params):
+    """Get linked items for a timeline item."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    linked = item.GetLinkedItems()
+    linked_info = []
+    if linked:
+        for li in linked:
+            linked_info.append({
+                "name": li.GetName(),
+                "start": li.GetStart(),
+                "end": li.GetEnd(),
+                "duration": li.GetDuration()
+            })
+    
+    return success({"linked_items": linked_info, "count": len(linked_info)})
 
 
 # =============================================================================
@@ -2887,6 +3562,139 @@ def op_export_project(resolve, params):
     return error(f"Failed to export project to: {file_path}")
 
 
+def op_create_project(resolve, params):
+    """Create a new project."""
+    name = params.get("name", "")
+    if not name:
+        return error("Project name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    project = pm.CreateProject(name)
+    if project:
+        return success({"created": True, "project": project.GetName()})
+    return error(f"Failed to create project: {name}")
+
+
+def op_delete_project(resolve, params):
+    """Delete a project."""
+    name = params.get("name", "")
+    if not name:
+        return error("Project name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    # Check if trying to delete current project
+    current = pm.GetCurrentProject()
+    if current and current.GetName() == name:
+        return error("Cannot delete currently open project. Close it first.", "PROJECT_IN_USE")
+    
+    result = pm.DeleteProject(name)
+    if result:
+        return success({"deleted": True, "project": name})
+    return error(f"Failed to delete project: {name}")
+
+
+def op_archive_project(resolve, params):
+    """Archive a project to .dra file."""
+    name = params.get("name", "")
+    file_path = params.get("path", "")
+    filename = params.get("filename", "")
+    with_stills_and_luts = params.get("with_stills_and_luts", True)
+    
+    if not name:
+        return error("Project name is required", "INVALID_PARAM")
+    if not file_path:
+        return error("Archive path is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    # ArchiveProject(projectName, filePath, isArchiveSrcMedia=True, isArchiveRenderCache=True, isArchiveProxyMedia=False)
+    result = pm.ArchiveProject(
+        name,
+        file_path,
+        True,  # isArchiveSrcMedia
+        True,  # isArchiveRenderCache
+        False  # isArchiveProxyMedia
+    )
+    if result:
+        return success({"archived": True, "project": name, "path": file_path})
+    return error(f"Failed to archive project: {name}")
+
+
+def op_load_project(resolve, params):
+    """Load/open a project."""
+    name = params.get("name", "")
+    if not name:
+        return error("Project name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    project = pm.LoadProject(name)
+    if project:
+        return success({"loaded": True, "project": project.GetName()})
+    return error(f"Failed to load project: {name}")
+
+
+def op_get_project_list(resolve, params):
+    """Get list of projects in current folder."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    projects = pm.GetProjectListInCurrentFolder()
+    current = pm.GetCurrentProject()
+    current_name = current.GetName() if current else None
+    
+    return success({
+        "projects": projects or [],
+        "current": current_name
+    })
+
+
+def op_close_project(resolve, params):
+    """Close the current project."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return error("Could not get project manager", "NO_PROJECT_MANAGER")
+    
+    current = pm.GetCurrentProject()
+    if not current:
+        return error("No project is open", "NO_PROJECT")
+    
+    project_name = current.GetName()
+    result = pm.CloseProject(current)
+    if result:
+        return success({"closed": True, "project": project_name})
+    return error(f"Failed to close project: {project_name}")
+
+
 def op_get_project_setting(resolve, params):
     """Get a project setting."""
     setting_name = params.get("name", "")
@@ -3059,6 +3867,382 @@ def op_get_gallery_albums(resolve, params):
             album_names.append(gallery.GetAlbumName(album))
     
     return success({"albums": album_names, "type": album_type})
+
+
+def get_gallery_album(gallery, album_name, album_type="stills"):
+    """Helper to find a gallery album by name."""
+    if album_type == "powergrade":
+        albums = gallery.GetGalleryPowerGradeAlbums()
+    else:
+        albums = gallery.GetGalleryStillAlbums()
+    
+    if albums:
+        for album in albums:
+            if gallery.GetAlbumName(album) == album_name:
+                return album
+    return None
+
+
+def op_create_gallery_album(resolve, params):
+    """Create a new gallery album."""
+    name = params.get("name", "")
+    album_type = params.get("type", "stills")
+    
+    if not name:
+        return error("Album name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    if album_type == "powergrade":
+        album = gallery.CreateGalleryPowerGradeAlbum(name)
+    else:
+        album = gallery.CreateGalleryStillAlbum(name)
+    
+    if album:
+        return success({"created": True, "name": name, "type": album_type})
+    return error(f"Failed to create album: {name}")
+
+
+def op_delete_gallery_album(resolve, params):
+    """Delete a gallery album."""
+    name = params.get("name", "")
+    album_type = params.get("type", "stills")
+    
+    if not name:
+        return error("Album name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    album = get_gallery_album(gallery, name, album_type)
+    if not album:
+        return error(f"Album not found: {name}", "ALBUM_NOT_FOUND")
+    
+    if album_type == "powergrade":
+        result = gallery.DeleteGalleryPowerGradeAlbum(album)
+    else:
+        result = gallery.DeleteGalleryStillAlbum(album)
+    
+    if result:
+        return success({"deleted": True, "name": name})
+    return error(f"Failed to delete album: {name}")
+
+
+def op_import_stills(resolve, params):
+    """Import stills into a gallery album."""
+    album_name = params.get("album", "")
+    paths = params.get("paths", [])
+    
+    if not album_name:
+        return error("Album name is required", "INVALID_PARAM")
+    if not paths:
+        return error("At least one path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    album = get_gallery_album(gallery, album_name)
+    if not album:
+        return error(f"Album not found: {album_name}", "ALBUM_NOT_FOUND")
+    
+    result = album.ImportStills(paths)
+    if result:
+        return success({"imported": True, "album": album_name, "count": len(result) if result else 0})
+    return error(f"Failed to import stills")
+
+
+def op_export_stills(resolve, params):
+    """Export stills from a gallery album."""
+    album_name = params.get("album", "")
+    output_path = params.get("path", "")
+    prefix = params.get("prefix", "")
+    
+    if not album_name:
+        return error("Album name is required", "INVALID_PARAM")
+    if not output_path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    album = get_gallery_album(gallery, album_name)
+    if not album:
+        return error(f"Album not found: {album_name}", "ALBUM_NOT_FOUND")
+    
+    stills = album.GetStills()
+    if not stills:
+        return error("No stills in album")
+    
+    result = album.ExportStills(stills, output_path, prefix)
+    if result:
+        return success({"exported": True, "album": album_name, "path": output_path})
+    return error(f"Failed to export stills")
+
+
+def op_get_still_label(resolve, params):
+    """Get label for a still in an album."""
+    album_name = params.get("album", "")
+    index = params.get("index", 0)
+    
+    if not album_name:
+        return error("Album name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    album = get_gallery_album(gallery, album_name)
+    if not album:
+        return error(f"Album not found: {album_name}", "ALBUM_NOT_FOUND")
+    
+    stills = album.GetStills()
+    if not stills or index >= len(stills):
+        return error(f"Still not found at index {index}")
+    
+    still = stills[index]
+    label = gallery.GetStillLabel(still)
+    
+    return success({"album": album_name, "index": index, "label": label or ""})
+
+
+def op_set_still_label(resolve, params):
+    """Set label for a still in an album."""
+    album_name = params.get("album", "")
+    index = params.get("index", 0)
+    label = params.get("label", "")
+    
+    if not album_name:
+        return error("Album name is required", "INVALID_PARAM")
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    gallery = project.GetGallery()
+    if not gallery:
+        return error("Could not get gallery")
+    
+    album = get_gallery_album(gallery, album_name)
+    if not album:
+        return error(f"Album not found: {album_name}", "ALBUM_NOT_FOUND")
+    
+    stills = album.GetStills()
+    if not stills or index >= len(stills):
+        return error(f"Still not found at index {index}")
+    
+    still = stills[index]
+    result = gallery.SetStillLabel(still, label)
+    
+    if result:
+        return success({"album": album_name, "index": index, "label": label})
+    return error(f"Failed to set still label")
+
+
+# =============================================================================
+# Node Graph Operations
+# =============================================================================
+
+def op_set_node_enabled(resolve, params):
+    """Enable or disable a color node."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    node_index = params.get("node", 1)
+    enabled = params.get("enabled", True)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    graph = item.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    result = graph.SetNodeEnabled(node_index, enabled)
+    if result:
+        return success({"node": node_index, "enabled": enabled})
+    return error(f"Failed to set node enabled state")
+
+
+def op_get_tools_in_node(resolve, params):
+    """Get tools in a color node."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    node_index = params.get("node", 1)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    graph = item.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    tools = graph.GetToolsInNode(node_index)
+    return success({"node": node_index, "tools": tools or []})
+
+
+def op_apply_arri_cdl_lut(resolve, params):
+    """Apply ARRI CDL LUT to clip."""
+    track = params.get("track", 1)
+    index = params.get("index", 0)
+    
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if not project:
+        return error("No project is open", "NO_PROJECT")
+    
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        return error("No timeline is active", "NO_TIMELINE")
+    
+    item = get_timeline_item(timeline, track, index)
+    if not item:
+        return error(f"Clip not found at track {track}, index {index}", "CLIP_NOT_FOUND")
+    
+    graph = item.GetNodeGraph()
+    if not graph:
+        return error("Could not get node graph")
+    
+    result = graph.ApplyArriCdlLut()
+    if result:
+        return success({"applied": True})
+    return error("Failed to apply ARRI CDL LUT")
+
+
+# =============================================================================
+# Layout Preset Operations
+# =============================================================================
+
+def op_save_layout_preset(resolve, params):
+    """Save current UI layout as preset."""
+    name = params.get("name", "")
+    
+    if not name:
+        return error("Preset name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.SaveLayoutPreset(name)
+    if result:
+        return success({"saved": True, "name": name})
+    return error(f"Failed to save layout preset: {name}")
+
+
+def op_load_layout_preset(resolve, params):
+    """Load a UI layout preset."""
+    name = params.get("name", "")
+    
+    if not name:
+        return error("Preset name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.LoadLayoutPreset(name)
+    if result:
+        return success({"loaded": True, "name": name})
+    return error(f"Failed to load layout preset: {name}")
+
+
+def op_export_layout_preset(resolve, params):
+    """Export UI layout preset to file."""
+    name = params.get("name", "")
+    path = params.get("path", "")
+    
+    if not name:
+        return error("Preset name is required", "INVALID_PARAM")
+    if not path:
+        return error("Output path is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.ExportLayoutPreset(name, path)
+    if result:
+        return success({"exported": True, "name": name, "path": path})
+    return error(f"Failed to export layout preset: {name}")
+
+
+def op_import_layout_preset(resolve, params):
+    """Import UI layout preset from file."""
+    path = params.get("path", "")
+    
+    if not path:
+        return error("Preset file path is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.ImportLayoutPreset(path)
+    if result:
+        return success({"imported": True, "path": path})
+    return error(f"Failed to import layout preset")
+
+
+def op_delete_layout_preset(resolve, params):
+    """Delete a UI layout preset."""
+    name = params.get("name", "")
+    
+    if not name:
+        return error("Preset name is required", "INVALID_PARAM")
+    
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    result = resolve.DeleteLayoutPreset(name)
+    if result:
+        return success({"deleted": True, "name": name})
+    return error(f"Failed to delete layout preset: {name}")
+
+
+def op_get_layout_presets(resolve, params):
+    """Get list of UI layout presets."""
+    if resolve is None:
+        return error("DaVinci Resolve is not running", "RESOLVE_NOT_RUNNING")
+    
+    presets = resolve.GetLayoutPresetList()
+    return success({"presets": presets or []})
 
 
 # =============================================================================
@@ -3497,10 +4681,28 @@ OPERATIONS = {
     "check_connection": op_check_connection,
     "get_context": op_get_context,
     
+    # Media Storage
+    "get_mounted_volumes": op_get_mounted_volumes,
+    "get_subfolder_list": op_get_subfolder_list,
+    "reveal_in_storage": op_reveal_in_storage,
+    "add_clip_matte": op_add_clip_matte,
+    
     # Media
     "import_media": op_import_media,
     "append_to_timeline": op_append_to_timeline,
     "create_timeline": op_create_timeline,
+    "auto_sync_audio": op_auto_sync_audio,
+    "move_folder": op_move_folder,
+    "export_metadata": op_export_metadata,
+    "create_stereo_clip": op_create_stereo_clip,
+    "get_selected_clips": op_get_selected_clips,
+    
+    # MediaPoolItem
+    "link_proxy_media": op_link_proxy_media,
+    "unlink_proxy_media": op_unlink_proxy_media,
+    "replace_clip": op_replace_clip,
+    "set_clip_in_out": op_set_clip_in_out,
+    "transcribe_audio": op_transcribe_audio,
     
     # Clip Properties
     "set_clip_property": op_set_clip_property,
@@ -3541,12 +4743,22 @@ OPERATIONS = {
     "duplicate_timeline": op_duplicate_timeline,
     "export_timeline": op_export_timeline,
     "import_timeline_from_file": op_import_timeline_from_file,
+    "get_current_clip_thumbnail": op_get_current_clip_thumbnail,
+    "grab_all_stills": op_grab_all_stills,
+    "convert_timeline_to_stereo": op_convert_timeline_to_stereo,
+    "analyze_dolby_vision": op_analyze_dolby_vision,
     
     # Fusion & Compositions
     "insert_fusion_composition": op_insert_fusion_composition,
     "create_fusion_clip": op_create_fusion_clip,
     "add_fusion_comp_to_clip": op_add_fusion_comp_to_clip,
     "create_compound_clip": op_create_compound_clip,
+    "import_fusion_comp": op_import_fusion_comp,
+    "export_fusion_comp": op_export_fusion_comp,
+    "rename_fusion_comp": op_rename_fusion_comp,
+    "export_lut_from_clip": op_export_lut_from_clip,
+    "regenerate_magic_mask": op_regenerate_magic_mask,
+    "get_linked_items": op_get_linked_items,
     
     # Generators & Titles
     "insert_generator": op_insert_generator,
@@ -3584,6 +4796,25 @@ OPERATIONS = {
     "export_still": op_export_still,
     "apply_grade_from_drx": op_apply_grade_from_drx,
     "get_gallery_albums": op_get_gallery_albums,
+    "create_gallery_album": op_create_gallery_album,
+    "delete_gallery_album": op_delete_gallery_album,
+    "import_stills": op_import_stills,
+    "export_stills": op_export_stills,
+    "get_still_label": op_get_still_label,
+    "set_still_label": op_set_still_label,
+    
+    # Node Graph
+    "set_node_enabled": op_set_node_enabled,
+    "get_tools_in_node": op_get_tools_in_node,
+    "apply_arri_cdl_lut": op_apply_arri_cdl_lut,
+    
+    # Layout Presets
+    "save_layout_preset": op_save_layout_preset,
+    "load_layout_preset": op_load_layout_preset,
+    "export_layout_preset": op_export_layout_preset,
+    "import_layout_preset": op_import_layout_preset,
+    "delete_layout_preset": op_delete_layout_preset,
+    "get_layout_presets": op_get_layout_presets,
     
     # Color Grading
     "apply_lut": op_apply_lut,
@@ -3632,6 +4863,14 @@ OPERATIONS = {
     "set_project_setting": op_set_project_setting,
     "get_timeline_setting": op_get_timeline_setting,
     "set_timeline_setting": op_set_timeline_setting,
+    
+    # Project Management
+    "create_project": op_create_project,
+    "delete_project": op_delete_project,
+    "archive_project": op_archive_project,
+    "load_project": op_load_project,
+    "get_project_list": op_get_project_list,
+    "close_project": op_close_project,
     
     # Keyframe Mode
     "set_keyframe_mode": op_set_keyframe_mode,

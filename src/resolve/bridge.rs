@@ -1,12 +1,16 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use super::context::{ConnectionInfo, ResolveContext};
 use crate::config::Config;
+
+/// Embedded Python bridge script (compiled into binary)
+const BRIDGE_SCRIPT: &str = include_str!("../../python/resolve_bridge.py");
 
 /// Bridge to communicate with DaVinci Resolve via Python
 pub struct ResolveBridge {
@@ -48,34 +52,24 @@ impl ResolveBridge {
     }
 
     fn find_script_path() -> String {
-        let script_name = "python/resolve_bridge.py";
+        // Get config directory (~/.config/magic-agent on macOS/Linux)
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("magic-agent");
 
-        // 1. Check next to executable (for installed binaries)
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                let path = parent.join(script_name);
-                if path.exists() {
-                    return path.to_string_lossy().to_string();
-                }
-            }
+        let script_path = config_dir.join("resolve_bridge.py");
+
+        // Write embedded script to config directory
+        // This ensures the script is always up-to-date with the binary version
+        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+            tracing::warn!("Failed to create config dir: {}", e);
         }
 
-        // 2. Check CARGO_MANIFEST_DIR (for development with cargo run)
-        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let path = std::path::Path::new(&manifest_dir).join(script_name);
-            if path.exists() {
-                return path.to_string_lossy().to_string();
-            }
+        if let Err(e) = std::fs::write(&script_path, BRIDGE_SCRIPT) {
+            tracing::warn!("Failed to write bridge script: {}", e);
         }
 
-        // 3. Check current working directory
-        let cwd_path = std::path::Path::new(script_name);
-        if cwd_path.exists() {
-            return cwd_path.to_string_lossy().to_string();
-        }
-
-        // 4. Fallback - return a path that will be reported as not found
-        script_name.to_string()
+        script_path.to_string_lossy().to_string()
     }
 
     /// Execute a command via the Python bridge

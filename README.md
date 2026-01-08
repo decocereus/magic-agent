@@ -16,20 +16,27 @@ Natural-language editing CLI for DaVinci Resolve. Convert plain English commands
 
 ## Installation
 
+### Homebrew (recommended)
+
+```bash
+brew tap decocereus/magic-agent
+brew install magic-agent
+```
+
 ### Build from source
 
 ```bash
-git clone https://github.com/amartyasingh/magic-agent.git
+git clone https://github.com/decocereus/magic-agent.git
 cd magic-agent
 cargo build --release
 ```
 
 The binary will be at `target/release/magic-agent`.
 
-### Install to PATH
+### Cargo (from git)
 
 ```bash
-cargo install --path .
+cargo install --git https://github.com/decocereus/magic-agent.git
 ```
 
 ## Configuration

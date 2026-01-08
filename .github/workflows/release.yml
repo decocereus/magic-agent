@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build release (x86_64)
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build release (arm64)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/x86_64-apple-darwin/release/magic-agent \
+            target/aarch64-apple-darwin/release/magic-agent \
+            -output magic-agent
+
+      - name: Create tarball
+        run: |
+          tar -czvf magic-agent-${{ github.ref_name }}-macos.tar.gz magic-agent
+          shasum -a 256 magic-agent-${{ github.ref_name }}-macos.tar.gz | awk '{print $1}' > sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            magic-agent-${{ github.ref_name }}-macos.tar.gz
+          body: |
+            ## Installation
+
+            ### Homebrew (recommended)
+            ```bash
+            brew tap decocereus/magic-agent
+            brew install magic-agent
+            ```
+
+            ### Manual
+            ```bash
+            # Download and extract
+            curl -LO https://github.com/decocereus/magic-agent/releases/download/${{ github.ref_name }}/magic-agent-${{ github.ref_name }}-macos.tar.gz
+            tar -xzf magic-agent-${{ github.ref_name }}-macos.tar.gz
+
+            # Move to PATH
+            sudo mv magic-agent /usr/local/bin/
+            ```
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          SHA=$(cat sha256.txt)
+          VERSION=${{ github.ref_name }}
+
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/decocereus/homebrew-magic-agent.git tap-repo
+          cd tap-repo
+
+          # Update URL and SHA in formula
+          sed -i '' "s|url \".*\"|url \"https://github.com/decocereus/magic-agent/releases/download/${VERSION}/magic-agent-${VERSION}-macos.tar.gz\"|" Formula/magic-agent.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/magic-agent.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/magic-agent.rb
+          git commit -m "Update magic-agent to ${VERSION}"
+          git push

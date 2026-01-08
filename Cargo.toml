@@ -2,7 +2,7 @@
 name = "magic-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Natural-language editing CLI for DaVinci Resolve"
+description = "Direct CLI for DaVinci Resolve scripting operations"
 license = "MIT"
 repository = "https://github.com/decocereus/magic-agent"
 
@@ -18,12 +18,10 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 dirs = "5"
-tempfile = "3"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"

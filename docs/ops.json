@@ -1,0 +1,2031 @@
+{
+  "version": "1.0",
+  "notes": [
+    "All commands execute against the currently open Resolve project/timeline.",
+    "Clip indices are 0-based; track indices are 1-based.",
+    "For selectors, use exactly one of index, name, or all.",
+    "Batch execution continues on errors and reports per-op status."
+  ],
+  "definitions": {
+    "ClipSelector": {
+      "description": "Selects clip(s) on a track. Exactly one of index, name, or all must be set.",
+      "type": "object",
+      "properties": {
+        "track": {
+          "type": "integer"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "track_type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio"
+          ]
+        }
+      }
+    },
+    "ClipSelectorMulti": {
+      "description": "Select multiple clips by indices.",
+      "type": "object",
+      "properties": {
+        "track": {
+          "type": "integer"
+        },
+        "indices": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "track_type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio"
+          ]
+        }
+      }
+    },
+    "ClipInfo": {
+      "description": "Clip with optional in/out points for append_to_timeline.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "in_point": {
+          "type": "integer"
+        },
+        "out_point": {
+          "type": "integer"
+        }
+      }
+    },
+    "Color": {
+      "type": "object",
+      "properties": {
+        "r": {
+          "type": "number"
+        },
+        "g": {
+          "type": "number"
+        },
+        "b": {
+          "type": "number"
+        },
+        "a": {
+          "type": "number"
+        }
+      }
+    },
+    "TextStyle": {
+      "type": "object",
+      "properties": {
+        "font": {
+          "type": "string"
+        },
+        "size": {
+          "type": "number"
+        },
+        "color": {
+          "$ref": "#/definitions/Color"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "tracking": {
+          "type": "number"
+        },
+        "line_spacing": {
+          "type": "number"
+        },
+        "h_anchor": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "v_anchor": {
+          "type": "string",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ]
+        },
+        "position": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          }
+        },
+        "shading": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "color": {
+              "$ref": "#/definitions/Color"
+            },
+            "outline": {
+              "type": "number"
+            },
+            "shadow_offset": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "name": "check_connection",
+      "summary": "Check Resolve connection",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_context",
+      "summary": "Get Resolve context",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "import_media",
+      "summary": "Import files into media pool",
+      "params": {
+        "type": "object",
+        "required": [
+          "paths"
+        ],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "append_to_timeline",
+      "summary": "Append clips to timeline",
+      "params": {
+        "type": "object",
+        "required": [
+          "clips"
+        ],
+        "properties": {
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "string|object",
+              "description": "Clip name or ClipInfo"
+            }
+          },
+          "track": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_timeline",
+      "summary": "Create a new timeline",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clip_property",
+      "summary": "Modify clip properties",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "properties"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "properties": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clip_enabled",
+      "summary": "Enable or disable clip(s)",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "enabled"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clip_color",
+      "summary": "Set or clear clip color label",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_marker",
+      "summary": "Add marker to timeline",
+      "params": {
+        "type": "object",
+        "required": [
+          "frame"
+        ],
+        "properties": {
+          "frame": {
+            "type": "integer"
+          },
+          "relative": {
+            "type": "boolean"
+          },
+          "color": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_clip_marker",
+      "summary": "Add marker to clip(s)",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "frame"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "frame": {
+            "type": "integer"
+          },
+          "timeline_frame": {
+            "type": "boolean"
+          },
+          "color": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_marker",
+      "summary": "Delete markers",
+      "params": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer"
+          },
+          "relative": {
+            "type": "boolean"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "clear_markers",
+      "summary": "Clear timeline and/or clip markers",
+      "params": {
+        "type": "object",
+        "properties": {
+          "timeline": {
+            "type": "boolean"
+          },
+          "clips": {
+            "type": "boolean"
+          },
+          "track_type": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio"
+            ]
+          },
+          "track": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_track",
+      "summary": "Add a track",
+      "params": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio",
+              "subtitle"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_track",
+      "summary": "Delete a track",
+      "params": {
+        "type": "object",
+        "required": [
+          "type",
+          "index"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_track_name",
+      "summary": "Rename a track",
+      "params": {
+        "type": "object",
+        "required": [
+          "type",
+          "index",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "enable_track",
+      "summary": "Enable or disable a track",
+      "params": {
+        "type": "object",
+        "required": [
+          "type",
+          "index",
+          "enabled"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "lock_track",
+      "summary": "Lock or unlock a track",
+      "params": {
+        "type": "object",
+        "required": [
+          "type",
+          "index",
+          "locked"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_render_job",
+      "summary": "Configure a render job",
+      "params": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "start_render",
+      "summary": "Start rendering",
+      "params": {
+        "type": "object",
+        "properties": {
+          "wait": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_render_settings",
+      "summary": "Set detailed render settings",
+      "params": {
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "settings": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_render_formats",
+      "summary": "List render formats",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_render_codecs",
+      "summary": "List codecs for a render format",
+      "params": {
+        "type": "object",
+        "required": [
+          "format"
+        ],
+        "properties": {
+          "format": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_render_format_and_codec",
+      "summary": "Set render format and codec",
+      "params": {
+        "type": "object",
+        "required": [
+          "format",
+          "codec"
+        ],
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "codec": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_render_presets",
+      "summary": "List render presets",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "load_render_preset",
+      "summary": "Load a render preset",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "save_render_preset",
+      "summary": "Save current settings as preset",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_render_preset",
+      "summary": "Delete a render preset",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_render_jobs",
+      "summary": "List render jobs",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "delete_render_job",
+      "summary": "Delete a render job",
+      "params": {
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_all_render_jobs",
+      "summary": "Delete all render jobs",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_render_job_status",
+      "summary": "Get render job status",
+      "params": {
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_timeline",
+      "summary": "Set active timeline",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_timeline",
+      "summary": "Duplicate the active timeline",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "export_timeline",
+      "summary": "Export timeline",
+      "params": {
+        "type": "object",
+        "required": [
+          "path",
+          "format"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "aaf",
+              "xml",
+              "edl",
+              "fcpxml"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "import_timeline_from_file",
+      "summary": "Import timeline from file",
+      "params": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "import_source_clips": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_fusion_composition",
+      "summary": "Insert Fusion composition",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "create_fusion_clip",
+      "summary": "Create Fusion clip from selected clips",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_fusion_comp_to_clip",
+      "summary": "Add Fusion comp to clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "type": "object",
+            "required": [
+              "track",
+              "index"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "index": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "create_compound_clip",
+      "summary": "Create compound clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_generator",
+      "summary": "Insert generator",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "fusion",
+              "ofx"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_title",
+      "summary": "Insert title",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "fusion"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "add_text_to_timeline",
+      "summary": "Add a Text+ title",
+      "params": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "style": {
+            "$ref": "#/definitions/TextStyle"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_text_content",
+      "summary": "Set Text+ content",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "text"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_text_style",
+      "summary": "Set Text+ style",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "style"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "style": {
+            "$ref": "#/definitions/TextStyle"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_text_properties",
+      "summary": "Get Text+ properties",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "stabilize_clip",
+      "summary": "Stabilize clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "type": "object",
+            "required": [
+              "track",
+              "index"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "index": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "smart_reframe",
+      "summary": "Apply smart reframe",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "type": "object",
+            "required": [
+              "track",
+              "index"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "index": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "create_magic_mask",
+      "summary": "Create magic mask",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "type": "object",
+            "required": [
+              "track",
+              "index"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "index": {
+                "type": "integer"
+              }
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "F",
+              "B",
+              "BI"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "detect_scene_cuts",
+      "summary": "Detect scene cuts",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "delete_clips",
+      "summary": "Delete clip(s)",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "type": "object",
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "track_type": {
+                "type": "string",
+                "enum": [
+                  "video",
+                  "audio"
+                ]
+              },
+              "all": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": "integer"
+              },
+              "indices": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "ripple": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clips_linked",
+      "summary": "Link or unlink clips",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "linked"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelectorMulti"
+          },
+          "linked": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_current_timecode",
+      "summary": "Set playhead timecode",
+      "params": {
+        "type": "object",
+        "required": [
+          "timecode"
+        ],
+        "properties": {
+          "timecode": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_current_timecode",
+      "summary": "Get playhead timecode",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "open_page",
+      "summary": "Open Resolve page",
+      "params": {
+        "type": "object",
+        "required": [
+          "page"
+        ],
+        "properties": {
+          "page": {
+            "type": "string",
+            "enum": [
+              "media",
+              "cut",
+              "edit",
+              "fusion",
+              "color",
+              "fairlight",
+              "deliver"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "get_current_page",
+      "summary": "Get current Resolve page",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "create_subtitles_from_audio",
+      "summary": "Create subtitles from audio",
+      "params": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "detect_beats",
+      "summary": "Detect beats and add markers",
+      "params": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": "integer"
+          },
+          "track_type": {
+            "type": "string",
+            "enum": [
+              "audio",
+              "video"
+            ]
+          },
+          "mark_downbeats": {
+            "type": "boolean"
+          },
+          "mark_beats": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "check_audio_deps",
+      "summary": "Check beat detection dependencies",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "grab_still",
+      "summary": "Grab still",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "export_still",
+      "summary": "Export current frame still",
+      "params": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "apply_grade_from_drx",
+      "summary": "Apply grade from DRX",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "path"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "path": {
+            "type": "string"
+          },
+          "grade_mode": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_gallery_albums",
+      "summary": "List gallery albums",
+      "params": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "stills",
+              "powergrade"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "apply_lut",
+      "summary": "Apply LUT to clip node",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "lut_path"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "lut_path": {
+            "type": "string"
+          },
+          "node_index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_lut",
+      "summary": "Get LUT path from clip node",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "node_index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_cdl",
+      "summary": "Set CDL values on a clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "node_index": {
+            "type": "integer"
+          },
+          "slope": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "string"
+          },
+          "power": {
+            "type": "string"
+          },
+          "saturation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "copy_grades",
+      "summary": "Copy grades from source to targets",
+      "params": {
+        "type": "object",
+        "required": [
+          "source",
+          "targets"
+        ],
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": [
+              "track",
+              "index"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "index": {
+                "type": "integer"
+              }
+            }
+          },
+          "targets": {
+            "type": "object",
+            "required": [
+              "track"
+            ],
+            "properties": {
+              "track": {
+                "type": "integer"
+              },
+              "all": {
+                "type": "boolean"
+              },
+              "indices": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "reset_grades",
+      "summary": "Reset grades on a clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_color_version",
+      "summary": "Add color version",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "name"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "load_color_version",
+      "summary": "Load color version",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "name"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_color_versions",
+      "summary": "List color versions",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "type": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_color_version",
+      "summary": "Delete color version",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "name"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_color_group",
+      "summary": "Create color group",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_color_groups",
+      "summary": "List color groups",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "assign_to_color_group",
+      "summary": "Assign clip to color group",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "group"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "group": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "remove_from_color_group",
+      "summary": "Remove clip from color group",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_color_group",
+      "summary": "Delete color group",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_media_pool_folder",
+      "summary": "Create media pool folder",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_current_media_pool_folder",
+      "summary": "Set current media pool folder",
+      "params": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "move_media_pool_clips",
+      "summary": "Move media pool clips",
+      "params": {
+        "type": "object",
+        "required": [
+          "clips",
+          "target_folder"
+        ],
+        "properties": {
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_folder": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_media_pool_clips",
+      "summary": "Delete media pool clips",
+      "params": {
+        "type": "object",
+        "required": [
+          "clips"
+        ],
+        "properties": {
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_media_pool_folders",
+      "summary": "Delete media pool folders",
+      "params": {
+        "type": "object",
+        "required": [
+          "folders"
+        ],
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "set_clip_metadata",
+      "summary": "Set metadata on a media pool clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "clip",
+          "metadata"
+        ],
+        "properties": {
+          "clip": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_clip_metadata",
+      "summary": "Get metadata from a media pool clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "clip"
+        ],
+        "properties": {
+          "clip": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "relink_clips",
+      "summary": "Relink media pool clips to a folder path",
+      "params": {
+        "type": "object",
+        "required": [
+          "clips",
+          "folder_path"
+        ],
+        "properties": {
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folder_path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_flag",
+      "summary": "Add flag to clip(s)",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "color"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_flags",
+      "summary": "Get flags from a clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "clear_flags",
+      "summary": "Clear flags from clip(s)",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_take",
+      "summary": "Add a take to a clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "media_pool_clip"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "media_pool_clip": {
+            "type": "string"
+          },
+          "start_frame": {
+            "type": "integer"
+          },
+          "end_frame": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "select_take",
+      "summary": "Select a take",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "take_index"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "take_index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_takes",
+      "summary": "Get takes for a clip",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "finalize_take",
+      "summary": "Finalize take selection",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_take",
+      "summary": "Delete a take",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "take_index"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "take_index": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "save_project",
+      "summary": "Save current project",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "export_project",
+      "summary": "Export project to DRP",
+      "params": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "with_stills_and_luts": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_project_setting",
+      "summary": "Get project setting(s)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_project_setting",
+      "summary": "Set project setting",
+      "params": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_timeline_setting",
+      "summary": "Get timeline setting(s)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_timeline_setting",
+      "summary": "Set timeline setting",
+      "params": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "set_keyframe_mode",
+      "summary": "Set keyframe mode",
+      "params": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_keyframe_mode",
+      "summary": "Get keyframe mode",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "set_clip_cache_mode",
+      "summary": "Set clip cache mode",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector",
+          "cache_type",
+          "enabled"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          },
+          "cache_type": {
+            "type": "string",
+            "enum": [
+              "color",
+              "fusion"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_clip_cache_mode",
+      "summary": "Get clip cache mode",
+      "params": {
+        "type": "object",
+        "required": [
+          "selector"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "#/definitions/ClipSelector"
+          }
+        }
+      }
+    },
+    {
+      "name": "refresh_lut_list",
+      "summary": "Refresh LUT list",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

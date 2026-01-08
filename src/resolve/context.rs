@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Full Resolve context for LLM consumption
+/// Full Resolve context for CLI output and integrations
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResolveContext {
     pub product: String,

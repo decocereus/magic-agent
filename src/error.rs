@@ -39,7 +39,7 @@ pub enum MagicError {
     #[error("Python bridge error: {0}")]
     PythonError(String),
 
-    #[error("LLM API error: {0}")]
+    #[error("API error: {0}")]
     ApiError(String),
 
     #[error("Plan validation failed: {0}")]
